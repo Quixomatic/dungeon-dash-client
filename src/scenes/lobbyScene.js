@@ -1,20 +1,38 @@
 // src/scenes/LobbyScene.js
 import Phaser from 'phaser';
-import { Client } from 'colyseus.js';
+import networkManager from '../systems/NetworkManager.js';
+import gameState from '../systems/GameState.js';
+import { createDebugHelper } from '../utils/debug.js';
 
 export class LobbyScene extends Phaser.Scene {
   constructor() {
     super('LobbyScene');
-    this.client = null;
-    this.playerName = 'Player_' + Math.floor(Math.random() * 1000);
+    this.playerName = 'Player_' + Math.floor(Math.random() * 1000) + '_' + Date.now() % 10000;
+    this.eventNotification = null;
+    this.debug = null;
   }
 
   preload() {
-    this.load.image('character', 'assets/character.png');
-    this.load.image('button', 'assets/button.png');
+    // Create textures instead of loading images
+    this.textures.generate('character', {
+      data: ['8888', '8888', '8888', '8888'],
+      pixelWidth: 16,
+      pixelHeight: 16
+    });
+    
+    this.textures.generate('button', {
+      data: ['2222222222', '2222222222', '2222222222', '2222222222'],
+      pixelWidth: 20,
+      pixelHeight: 10
+    });
   }
 
   create() {
+    // Reset game state to lobby phase
+    gameState.reset();
+    gameState.setPhase('lobby');
+    
+    // UI elements
     this.add.text(400, 100, 'Dungeon Dash Royale', {
       fontSize: '32px',
       fill: '#fff'
@@ -22,6 +40,12 @@ export class LobbyScene extends Phaser.Scene {
 
     this.add.text(400, 150, 'Lobby', {
       fontSize: '24px',
+      fill: '#fff'
+    }).setOrigin(0.5);
+
+    // Name display
+    this.add.text(400, 200, `Your name: ${this.playerName}`, {
+      fontSize: '18px',
       fill: '#fff'
     }).setOrigin(0.5);
 
@@ -57,64 +81,104 @@ export class LobbyScene extends Phaser.Scene {
       fill: '#ff0',
       fontStyle: 'bold'
     }).setOrigin(0.5).setVisible(false);
+    
+    // Create debug helper
+    this.debug = createDebugHelper(this, {
+      sceneName: 'LOBBY SCENE',
+      sceneLabelColor: '#ff9900',
+      y: 480
+    });
+    
+    // Set up phase change listener
+    gameState.addEventListener('phaseChange', data => {
+      if (data.newPhase === 'playing') {
+        this.startGame();
+      }
+    });
+    
+    // Update debug info periodically
+    this.time.addEvent({
+      delay: 500,
+      callback: this.updateDebugInfo,
+      callbackScope: this,
+      loop: true
+    });
+  }
+  
+  updateDebugInfo() {
+    this.debug.displayObject({
+      'Phase': gameState.getPhase(),
+      'Players': gameState.getPlayerCount(),
+      'Connected': networkManager.isConnected() ? 'Yes' : 'No',
+      'Your ID': networkManager.getPlayerId() || 'Not connected'
+    });
+    
+    // Update player count
+    this.playerCountText.setText(`Players: ${gameState.getPlayerCount()} / 100`);
   }
 
   async connectToServer() {
     try {
       this.statusText.setText('Connecting to server...');
       
-      // Create Colyseus client
-      this.client = new Client('ws://localhost:2567');
+      // Initialize network manager
+      networkManager.init();
       
-      // Join or create "normal" room
-      const room = await this.client.joinOrCreate('normal', { 
-        name: this.playerName 
-      });
+      // Connect to server
+      const room = await networkManager.connect({ name: this.playerName });
       
-      this.statusText.setText('Connected! Room: ' + room.roomId);
+      this.statusText.setText('Connected! Room: ' + room.id);
       
-      // Store room in the registry to access it from other scenes
+      // Store room and player info in registry for access from other scenes
       this.registry.set('colyseusRoom', room);
       this.registry.set('playerName', this.playerName);
       
-      // Handle room state changes
-      room.onStateChange((state) => {
-        // Update player count
-        const playerCount = Object.keys(state.players).length;
-        this.playerCountText.setText(`Players: ${playerCount} / 100`);
-        document.getElementById('player-count').innerText = `Players: ${playerCount}`;
-        
-        // Check if game is starting
-        if (state.gameStarted) {
-          this.startGame();
-        }
-      });
-      
-      // Handle countdown
-      room.onMessage('countdownStarted', (message) => {
+      // Add message handlers
+      networkManager.addMessageHandler('countdownStarted', message => {
         this.countdownText.setText(`Game starting in ${message.seconds}s`);
         this.countdownText.setVisible(true);
       });
       
-      room.onMessage('countdownUpdate', (message) => {
+      networkManager.addMessageHandler('countdownUpdate', message => {
         this.countdownText.setText(`Game starting in ${message.seconds}s`);
       });
       
-      room.onMessage('gameStarted', () => {
-        this.startGame();
+      networkManager.addMessageHandler('globalEvent', message => {
+        this.showGlobalEventNotification(message.message);
       });
       
-      // Handle game start
-      room.onMessage('dungeonGenerated', (message) => {
-        // Store dungeon data in registry
-        this.registry.set('dungeonData', message);
-        this.startGame();
-      });
+      // Update DOM elements
+      const playerCountElement = document.getElementById('player-count');
+      if (playerCountElement) {
+        playerCountElement.innerText = `Players: ${gameState.getPlayerCount()}`;
+      }
 
     } catch (error) {
       console.error("Connection error:", error);
       this.statusText.setText('Connection error: ' + error.message);
     }
+  }
+
+  showGlobalEventNotification(message) {
+    // Create or update notification text
+    if (this.eventNotification) {
+      this.eventNotification.setText(message);
+      this.eventNotification.setVisible(true);
+    } else {
+      this.eventNotification = this.add.text(400, 500, message, {
+        fontSize: '18px',
+        fill: '#ffff00',
+        backgroundColor: '#333333',
+        padding: { x: 10, y: 5 }
+      }).setOrigin(0.5);
+    }
+    
+    // Hide after a few seconds
+    this.time.delayedCall(5000, () => {
+      if (this.eventNotification) {
+        this.eventNotification.setVisible(false);
+      }
+    });
   }
 
   startGame() {
