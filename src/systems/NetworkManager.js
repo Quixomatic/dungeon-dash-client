@@ -1,14 +1,14 @@
 // src/systems/NetworkManager.js
-import { Client } from 'colyseus.js';
-import gameState from './GameState.js';
+import { Client } from "colyseus.js";
+import gameState from "./GameState.js";
 
 class NetworkManager {
   constructor() {
     this.client = null;
     this.room = null;
     this.connected = false;
-    this.serverUrl = 'ws://localhost:2567';
-    this.roomType = 'normal';
+    this.serverUrl = "ws://localhost:2567";
+    this.roomType = "normal";
     this.messageHandlers = new Map();
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
@@ -17,8 +17,14 @@ class NetworkManager {
     this.lastInputTime = 0;
     this.inputSendRate = 16.67; // Send inputs at ~60Hz
     this.lastInput = null;
+
+    // Input tracking for reconciliation
+    this.inputSequence = 0;
+    this.pendingInputs = [];
+    this.lastServerState = null;
+    this.lastProcessedInput = 0;
   }
-  
+
   /**
    * Initialize the network manager
    * @param {Object} config - Configuration options
@@ -27,22 +33,22 @@ class NetworkManager {
     if (config.serverUrl) {
       this.serverUrl = config.serverUrl;
     }
-    
+
     if (config.roomType) {
       this.roomType = config.roomType;
     }
-    
+
     if (config.debug !== undefined) {
       this.debug = config.debug;
     }
-    
+
     if (this.debug) {
       console.log(`NetworkManager initialized with server: ${this.serverUrl}`);
     }
-    
+
     return this;
   }
-  
+
   /**
    * Connect to the server and join a room
    * @param {Object} options - Connection options
@@ -53,30 +59,33 @@ class NetworkManager {
       if (!this.client) {
         this.client = new Client(this.serverUrl);
       }
-      
+
       // Join or create room
       this.room = await this.client.joinOrCreate(this.roomType, options);
       this.connected = true;
       this.reconnectAttempts = 0;
-      
+
       if (this.debug) {
         console.log(`Connected to room: ${this.room.id}`);
       }
-      
+
       // Set up state change handlers
       this.setupRoomHandlers();
-      
+
       return this.room;
     } catch (error) {
-      console.error('Connection error:', error);
-      
+      console.error("Connection error:", error);
+
       // Attempt reconnection
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
         this.reconnectAttempts++;
-        const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1); // Exponential backoff
-        
-        console.log(`Reconnecting (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${delay}ms...`);
-        
+        const delay =
+          this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1); // Exponential backoff
+
+        console.log(
+          `Reconnecting (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${delay}ms...`
+        );
+
         return new Promise((resolve, reject) => {
           setTimeout(async () => {
             try {
@@ -88,29 +97,29 @@ class NetworkManager {
           }, delay);
         });
       }
-      
+
       throw error;
     }
   }
-  
+
   /**
    * Set up room event handlers
    * @private
    */
   setupRoomHandlers() {
     if (!this.room) return;
-    
+
     // Handle state changes
-    this.room.onStateChange(state => {
+    this.room.onStateChange((state) => {
       // Update game state based on room state
-      
+
       // Handle players
       if (state.players) {
         // Clear missing players
         const currentIds = new Set();
         for (const id in state.players) {
           currentIds.add(id);
-          
+
           const playerData = state.players[id];
           gameState.addPlayer(id, {
             name: playerData.name,
@@ -119,10 +128,10 @@ class NetworkManager {
             score: playerData.currentProgress || 0,
             health: playerData.health || 100,
             maxHealth: playerData.maxHealth || 100,
-            level: playerData.level || 1
+            level: playerData.level || 1,
           });
         }
-        
+
         // Remove players not in state
         for (const [id] of gameState.getAllPlayers()) {
           if (!currentIds.has(id)) {
@@ -130,33 +139,38 @@ class NetworkManager {
           }
         }
       }
-      
+
       // Update game phase
-      if (state.gameStarted && !state.gameEnded && gameState.getPhase() === 'lobby') {
-        gameState.setPhase('dungeon');
-      } else if (state.gameEnded && gameState.getPhase() !== 'results') {
-        gameState.setPhase('results');
+      if (
+        state.gameStarted &&
+        !state.gameEnded &&
+        gameState.getPhase() === "lobby"
+      ) {
+        gameState.setPhase("dungeon");
+      } else if (state.gameEnded && gameState.getPhase() !== "results") {
+        gameState.setPhase("results");
       } else if (state.phase && state.phase !== gameState.getPhase()) {
         gameState.setPhase(state.phase);
       }
     });
-    
+
     // Set up disconnect handler
-    this.room.onLeave(code => {
+    this.room.onLeave((code) => {
       console.log(`Left room: ${this.room.id}, code: ${code}`);
       this.connected = false;
       this.room = null;
-      
+
       // Attempt reconnection if disconnected unexpectedly
-      if (code !== 1000) { // Normal closure
+      if (code !== 1000) {
+        // Normal closure
         this.attemptReconnection();
       }
     });
-    
+
     // Set up standard message handlers
     this.setupMessageHandlers();
   }
-  
+
   /**
    * Attempt to reconnect to the server
    * @private
@@ -164,106 +178,108 @@ class NetworkManager {
   attemptReconnection() {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
-      const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1);
-      
-      console.log(`Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms...`);
-      
+      const delay =
+        this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1);
+
+      console.log(
+        `Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms...`
+      );
+
       setTimeout(() => {
-        this.connect()
-          .catch(error => {
-            console.error('Reconnection failed:', error);
-          });
+        this.connect().catch((error) => {
+          console.error("Reconnection failed:", error);
+        });
       }, delay);
     } else {
-      console.error('Max reconnection attempts reached');
+      console.error("Max reconnection attempts reached");
     }
   }
-  
+
   /**
    * Set up standard message handlers
    * @private
    */
   setupMessageHandlers() {
     // Countdown messages
-    this.addMessageHandler('countdownStarted', message => {
+    this.addMessageHandler("countdownStarted", (message) => {
       if (this.debug) {
-        console.log('Countdown started:', message);
+        console.log("Countdown started:", message);
       }
     });
-    
-    this.addMessageHandler('countdownUpdate', message => {
+
+    this.addMessageHandler("countdownUpdate", (message) => {
       if (this.debug) {
-        console.log('Countdown update:', message);
+        console.log("Countdown update:", message);
       }
     });
-    
-    this.addMessageHandler('gameStarted', () => {
+
+    this.addMessageHandler("gameStarted", () => {
       if (this.debug) {
-        console.log('Game started');
+        console.log("Game started");
       }
-      gameState.setPhase('dungeon');
+      gameState.setPhase("dungeon");
     });
-    
-    this.addMessageHandler('dungeonGenerated', message => {
+
+    this.addMessageHandler("dungeonGenerated", (message) => {
       if (this.debug) {
-        console.log('Dungeon generated:', message);
+        console.log("Dungeon generated:", message);
       }
     });
-    
-    this.addMessageHandler('leaderboardUpdate', message => {
+
+    this.addMessageHandler("leaderboardUpdate", (message) => {
       if (this.debug) {
-        console.log('Leaderboard update:', message);
+        console.log("Leaderboard update:", message);
       }
       // Update player scores
     });
-    
-    this.addMessageHandler('globalEvent', message => {
+
+    this.addMessageHandler("globalEvent", (message) => {
       if (this.debug) {
-        console.log('Global event:', message);
+        console.log("Global event:", message);
       }
     });
-    
-    this.addMessageHandler('gameEnded', message => {
+
+    this.addMessageHandler("gameEnded", (message) => {
       if (this.debug) {
-        console.log('Game ended:', message);
+        console.log("Game ended:", message);
       }
       gameState.endGame(message);
     });
-    
-    this.addMessageHandler('playerJoined', message => {
+
+    this.addMessageHandler("playerJoined", (message) => {
       if (this.debug) {
-        console.log('Player joined:', message);
+        console.log("Player joined:", message);
       }
     });
-    
-    this.addMessageHandler('playerLeft', message => {
+
+    this.addMessageHandler("playerLeft", (message) => {
       if (this.debug) {
-        console.log('Player left:', message);
+        console.log("Player left:", message);
       }
     });
-    
-    this.addMessageHandler('playerMoved', message => {
+
+    this.addMessageHandler("playerMoved", (message) => {
       if (this.debug) {
-        console.log('Player moved:', message);
+        console.log("Player moved:", message);
       }
-      
+
       // Update player position in game state
       const player = gameState.getPlayer(message.id);
       if (player) {
         gameState.updatePlayer(message.id, {
-          position: { x: message.x, y: message.y }
+          position: { x: message.x, y: message.y },
         });
       }
     });
-    
-    this.addMessageHandler('phaseChange', message => {
+
+    this.addMessageHandler("phaseChange", (message) => {
       if (this.debug) {
-        console.log('Phase change:', message);
+        console.log("Phase change:", message);
       }
       gameState.setPhase(message.phase);
     });
   }
-  
+
   /**
    * Add a message handler
    * @param {string} type - Message type
@@ -271,9 +287,9 @@ class NetworkManager {
    */
   addMessageHandler(type, handler) {
     this.messageHandlers.set(type, handler);
-    
+
     if (this.room) {
-      this.room.onMessage(type, message => {
+      this.room.onMessage(type, (message) => {
         try {
           handler(message);
         } catch (error) {
@@ -282,7 +298,7 @@ class NetworkManager {
       });
     }
   }
-  
+
   /**
    * Send a message to the server
    * @param {string} type - Message type
@@ -292,12 +308,12 @@ class NetworkManager {
     if (this.room && this.connected) {
       this.room.send(type, data);
     } else {
-      console.warn('Cannot send message: not connected');
+      console.warn("Cannot send message: not connected");
     }
   }
-  
+
   /**
-   * Send player input to the server
+   * Send player input to the server with sequence number
    * @param {Object} inputState - Player input state
    */
   sendPlayerInput(inputState) {
@@ -305,19 +321,32 @@ class NetworkManager {
     const now = Date.now();
     if (now - this.lastInputTime < this.inputSendRate) {
       // Store input for sending in next allowed time slot
-      this.lastInput = { ...inputState };
+      this.lastInput = {
+        ...inputState,
+        timestamp: now,
+      };
       return;
     }
-    
+
     this.lastInputTime = now;
-    
-    // Send input to server
-    this.sendMessage('playerInput', inputState);
-    
+
+    // Add sequence number
+    const sequencedInput = {
+      ...inputState,
+      seq: this.inputSequence++,
+      timestamp: now,
+    };
+
+    // Store input for reconciliation
+    this.pendingInputs.push(sequencedInput);
+
+    // Send to server
+    this.sendMessage("playerInput", sequencedInput);
+
     // Clear stored input
     this.lastInput = null;
   }
-  
+
   /**
    * Process any pending inputs (called from game update loop)
    */
@@ -329,20 +358,74 @@ class NetworkManager {
       }
     }
   }
-  
+
   /**
    * Legacy method: Send player movement to the server directly
    * @param {number} x - X position
    * @param {number} y - Y position
    */
   sendPlayerMovement(x, y) {
-    this.sendMessage('playerAction', {
-      type: 'move',
+    this.sendMessage("playerAction", {
+      type: "move",
       x: x,
-      y: y
+      y: y,
     });
   }
-  
+
+  /**
+   * Apply server reconciliation if needed
+   * @param {Phaser.GameObjects.Sprite} playerSprite - Local player sprite
+   */
+  applyServerReconciliation(playerSprite) {
+    if (!this.lastServerState) return;
+
+    // Check if positions are significantly different
+    const serverX = this.lastServerState.position.x;
+    const serverY = this.lastServerState.position.y;
+    const diffX = Math.abs(playerSprite.x - serverX);
+    const diffY = Math.abs(playerSprite.y - serverY);
+
+    // If difference is significant, reconcile
+    if (diffX > 5 || diffY > 5) {
+      console.log(
+        `Reconciling position: local(${playerSprite.x},${playerSprite.y}) server(${serverX},${serverY})`
+      );
+
+      // Set player to server position
+      playerSprite.x = serverX;
+      playerSprite.y = serverY;
+
+      // Re-apply any inputs that haven't been processed by server yet
+      const inputsToReapply = this.pendingInputs.filter(
+        (input) => input.seq > this.lastProcessedInput
+      );
+
+      console.log(`Reapplying ${inputsToReapply.length} inputs`);
+
+      // Clear inputs that have been processed
+      this.pendingInputs = inputsToReapply;
+    }
+  }
+
+  /**
+   * Set up server state and input acknowledgment handlers
+   */
+  setupReconciliationHandlers() {
+    // Input acknowledgment handler
+    this.addMessageHandler("inputAck", (message) => {
+      // Store last processed input sequence
+      this.lastProcessedInput = message.seq;
+
+      // Store last server state for reconciliation
+      this.lastServerState = message;
+
+      // Remove acknowledged inputs from pending list
+      this.pendingInputs = this.pendingInputs.filter(
+        (input) => input.seq > message.seq
+      );
+    });
+  }
+
   /**
    * Get the current room instance
    * @returns {Room|null} - Colyseus room or null if not connected
@@ -350,7 +433,7 @@ class NetworkManager {
   getRoom() {
     return this.room;
   }
-  
+
   /**
    * Check if connected to server
    * @returns {boolean} - True if connected
@@ -358,7 +441,7 @@ class NetworkManager {
   isConnected() {
     return this.connected && this.room !== null;
   }
-  
+
   /**
    * Get the current player ID
    * @returns {string|null} - Player ID or null if not connected
@@ -366,7 +449,7 @@ class NetworkManager {
   getPlayerId() {
     return this.room ? this.room.sessionId : null;
   }
-  
+
   /**
    * Disconnect from the server
    */
@@ -375,7 +458,7 @@ class NetworkManager {
       this.room.leave();
       this.room = null;
     }
-    
+
     this.connected = false;
   }
 }

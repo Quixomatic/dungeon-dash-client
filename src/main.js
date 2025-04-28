@@ -27,6 +27,10 @@ const config = {
       debug: false,
     },
   },
+  fps: {
+    target: 60,      // Force 60 FPS
+    forceSetTimeOut: true  // Use setTimeout even if requestAnimationFrame is available
+  },
   scene: [LobbyScene, GameScene, ResultsScene],
 };
 
