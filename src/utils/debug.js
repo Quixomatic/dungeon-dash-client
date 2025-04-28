@@ -43,6 +43,10 @@ export function createDebugHelper(scene, options = {}) {
       }
     ).setOrigin(1, 0);
     
+    // Set higher depth to ensure visibility
+    debugText.setDepth(1000);
+    sceneLabel.setDepth(1000);
+    
     return {
       debugText,
       sceneLabel,
@@ -75,6 +79,72 @@ export function createDebugHelper(scene, options = {}) {
         });
         
         debugText.setText(lines.join('\n'));
+      },
+      
+      /**
+       * Shows a temporary message
+       * @param {string} message - Message to display
+       * @param {number} duration - Duration in milliseconds
+       */
+      showMessage: function(message, duration = 3000) {
+        const originalText = debugText.text;
+        
+        // Show message
+        debugText.setText(message);
+        
+        // Reset after duration
+        scene.time.delayedCall(duration, () => {
+          debugText.setText(originalText);
+        });
+      },
+      
+      /**
+       * Add a debugging line or shape
+       * @param {string} type - Shape type (line, rectangle, circle)
+       * @param {Object} params - Shape parameters
+       * @param {number} color - Color in hex format
+       */
+      drawShape: function(type, params, color = 0xff0000) {
+        // Create graphics object if not exists
+        if (!this.graphics) {
+          this.graphics = scene.add.graphics();
+          this.graphics.setDepth(999);
+        }
+        
+        // Clear previous drawings
+        this.graphics.clear();
+        this.graphics.lineStyle(2, color, 1);
+        
+        // Draw based on type
+        switch (type) {
+          case 'line':
+            this.graphics.lineBetween(
+              params.x1, params.y1, params.x2, params.y2
+            );
+            break;
+          case 'rectangle':
+            this.graphics.strokeRect(
+              params.x, params.y, params.width, params.height
+            );
+            break;
+          case 'circle':
+            this.graphics.strokeCircle(
+              params.x, params.y, params.radius
+            );
+            break;
+        }
+      },
+      
+      /**
+       * Toggle visibility of debug elements
+       * @param {boolean} visible - Visibility state
+       */
+      setVisible: function(visible) {
+        debugText.setVisible(visible);
+        sceneLabel.setVisible(visible);
+        if (this.graphics) {
+          this.graphics.setVisible(visible);
+        }
       }
     };
   }

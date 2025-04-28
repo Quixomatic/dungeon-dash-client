@@ -6,7 +6,7 @@
 class GameState {
     constructor() {
       // Game state properties
-      this.currentPhase = 'lobby'; // lobby, playing, results
+      this.currentPhase = 'lobby'; // lobby, dungeon, gauntlet, results
       this.players = new Map();
       this.gameStartTime = null;
       this.gameEndTime = null;
@@ -14,6 +14,8 @@ class GameState {
         maxPlayers: 100,
         minPlayersToStart: 2,
         gameDuration: 10 * 60 * 1000, // 10 minutes
+        dungeonPhaseDuration: 5 * 60 * 1000, // 5 minutes
+        gauntletPhaseDuration: 2 * 60 * 1000, // 2 minutes
       };
       
       // Event listeners
@@ -24,6 +26,9 @@ class GameState {
         gameStart: [],
         gameEnd: []
       };
+      
+      // Debug flag
+      this.debug = true;
     }
     
     /**
@@ -35,7 +40,14 @@ class GameState {
         this.gameConfig = { ...this.gameConfig, ...config.gameConfig };
       }
       
-      console.log('GameState initialized with config:', this.gameConfig);
+      if (config.debug !== undefined) {
+        this.debug = config.debug;
+      }
+      
+      if (this.debug) {
+        console.log('GameState initialized with config:', this.gameConfig);
+      }
+      
       return this;
     }
     
@@ -50,7 +62,7 @@ class GameState {
       this.currentPhase = phase;
       
       // If phase changed to 'playing', record game start time
-      if (phase === 'playing' && oldPhase !== 'playing') {
+      if (phase === 'dungeon' && oldPhase !== 'dungeon' && oldPhase !== 'gauntlet') {
         this.gameStartTime = Date.now();
       }
       
@@ -59,7 +71,9 @@ class GameState {
         this.gameEndTime = Date.now();
       }
       
-      console.log(`Game phase changed: ${oldPhase} -> ${phase}`);
+      if (this.debug) {
+        console.log(`Game phase changed: ${oldPhase} -> ${phase}`);
+      }
       
       // Trigger phase change event
       this.notifyListeners('phaseChange', { oldPhase, newPhase: phase });
@@ -87,10 +101,18 @@ class GameState {
           position: data.position || { x: 400, y: 300 },
           score: 0,
           isReady: false,
+          isAlive: true,
+          level: 1,
+          experience: 0,
+          health: 100,
+          maxHealth: 100,
           ...data
         });
         
-        console.log(`Player added: ${id}`);
+        if (this.debug) {
+          console.log(`Player added: ${id}`);
+        }
+        
         this.notifyListeners('playerJoined', { id, data: this.players.get(id) });
       } else {
         // Update existing player
@@ -107,7 +129,11 @@ class GameState {
       if (this.players.has(id)) {
         const playerData = this.players.get(id);
         this.players.delete(id);
-        console.log(`Player removed: ${id}`);
+        
+        if (this.debug) {
+          console.log(`Player removed: ${id}`);
+        }
+        
         this.notifyListeners('playerLeft', { id, data: playerData });
       }
     }
@@ -154,7 +180,7 @@ class GameState {
      */
     startGame() {
       this.gameStartTime = Date.now();
-      this.setPhase('playing');
+      this.setPhase('dungeon');
       this.notifyListeners('gameStart', { startTime: this.gameStartTime });
     }
     
@@ -246,7 +272,10 @@ class GameState {
       this.gameStartTime = null;
       this.gameEndTime = null;
       this.gameResults = null;
-      console.log('Game state reset');
+      
+      if (this.debug) {
+        console.log('Game state reset');
+      }
     }
   }
   

@@ -10,6 +10,13 @@ class NetworkManager {
     this.serverUrl = 'ws://localhost:2567';
     this.roomType = 'normal';
     this.messageHandlers = new Map();
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectDelay = 2000; // 2 seconds initial delay
+    this.debug = true;
+    this.lastInputTime = 0;
+    this.inputSendRate = 16.67; // Send inputs at ~60Hz
+    this.lastInput = null;
   }
   
   /**
@@ -25,7 +32,14 @@ class NetworkManager {
       this.roomType = config.roomType;
     }
     
-    console.log(`NetworkManager initialized with server: ${this.serverUrl}`);
+    if (config.debug !== undefined) {
+      this.debug = config.debug;
+    }
+    
+    if (this.debug) {
+      console.log(`NetworkManager initialized with server: ${this.serverUrl}`);
+    }
+    
     return this;
   }
   
@@ -43,8 +57,11 @@ class NetworkManager {
       // Join or create room
       this.room = await this.client.joinOrCreate(this.roomType, options);
       this.connected = true;
+      this.reconnectAttempts = 0;
       
-      console.log(`Connected to room: ${this.room.id}`);
+      if (this.debug) {
+        console.log(`Connected to room: ${this.room.id}`);
+      }
       
       // Set up state change handlers
       this.setupRoomHandlers();
@@ -52,6 +69,26 @@ class NetworkManager {
       return this.room;
     } catch (error) {
       console.error('Connection error:', error);
+      
+      // Attempt reconnection
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++;
+        const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1); // Exponential backoff
+        
+        console.log(`Reconnecting (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${delay}ms...`);
+        
+        return new Promise((resolve, reject) => {
+          setTimeout(async () => {
+            try {
+              const room = await this.connect(options);
+              resolve(room);
+            } catch (reconnectError) {
+              reject(reconnectError);
+            }
+          }, delay);
+        });
+      }
+      
       throw error;
     }
   }
@@ -79,7 +116,10 @@ class NetworkManager {
             name: playerData.name,
             position: playerData.position,
             isReady: playerData.ready,
-            score: playerData.currentProgress || 0
+            score: playerData.currentProgress || 0,
+            health: playerData.health || 100,
+            maxHealth: playerData.maxHealth || 100,
+            level: playerData.level || 1
           });
         }
         
@@ -92,10 +132,12 @@ class NetworkManager {
       }
       
       // Update game phase
-      if (state.gameStarted && !state.gameEnded && gameState.getPhase() !== 'playing') {
-        gameState.setPhase('playing');
+      if (state.gameStarted && !state.gameEnded && gameState.getPhase() === 'lobby') {
+        gameState.setPhase('dungeon');
       } else if (state.gameEnded && gameState.getPhase() !== 'results') {
         gameState.setPhase('results');
+      } else if (state.phase && state.phase !== gameState.getPhase()) {
+        gameState.setPhase(state.phase);
       }
     });
     
@@ -104,10 +146,37 @@ class NetworkManager {
       console.log(`Left room: ${this.room.id}, code: ${code}`);
       this.connected = false;
       this.room = null;
+      
+      // Attempt reconnection if disconnected unexpectedly
+      if (code !== 1000) { // Normal closure
+        this.attemptReconnection();
+      }
     });
     
     // Set up standard message handlers
     this.setupMessageHandlers();
+  }
+  
+  /**
+   * Attempt to reconnect to the server
+   * @private
+   */
+  attemptReconnection() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1);
+      
+      console.log(`Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms...`);
+      
+      setTimeout(() => {
+        this.connect()
+          .catch(error => {
+            console.error('Reconnection failed:', error);
+          });
+      }, delay);
+    } else {
+      console.error('Max reconnection attempts reached');
+    }
   }
   
   /**
@@ -117,34 +186,81 @@ class NetworkManager {
   setupMessageHandlers() {
     // Countdown messages
     this.addMessageHandler('countdownStarted', message => {
-      console.log('Countdown started:', message);
+      if (this.debug) {
+        console.log('Countdown started:', message);
+      }
     });
     
     this.addMessageHandler('countdownUpdate', message => {
-      console.log('Countdown update:', message);
+      if (this.debug) {
+        console.log('Countdown update:', message);
+      }
     });
     
     this.addMessageHandler('gameStarted', () => {
-      console.log('Game started');
-      gameState.setPhase('playing');
+      if (this.debug) {
+        console.log('Game started');
+      }
+      gameState.setPhase('dungeon');
     });
     
     this.addMessageHandler('dungeonGenerated', message => {
-      console.log('Dungeon generated:', message);
+      if (this.debug) {
+        console.log('Dungeon generated:', message);
+      }
     });
     
     this.addMessageHandler('leaderboardUpdate', message => {
-      console.log('Leaderboard update:', message);
+      if (this.debug) {
+        console.log('Leaderboard update:', message);
+      }
       // Update player scores
     });
     
     this.addMessageHandler('globalEvent', message => {
-      console.log('Global event:', message);
+      if (this.debug) {
+        console.log('Global event:', message);
+      }
     });
     
     this.addMessageHandler('gameEnded', message => {
-      console.log('Game ended:', message);
+      if (this.debug) {
+        console.log('Game ended:', message);
+      }
       gameState.endGame(message);
+    });
+    
+    this.addMessageHandler('playerJoined', message => {
+      if (this.debug) {
+        console.log('Player joined:', message);
+      }
+    });
+    
+    this.addMessageHandler('playerLeft', message => {
+      if (this.debug) {
+        console.log('Player left:', message);
+      }
+    });
+    
+    this.addMessageHandler('playerMoved', message => {
+      if (this.debug) {
+        console.log('Player moved:', message);
+      }
+      
+      // Update player position in game state
+      const player = gameState.getPlayer(message.id);
+      if (player) {
+        gameState.updatePlayer(message.id, {
+          position: { x: message.x, y: message.y }
+        });
+      }
+    });
+    
+    this.addMessageHandler('phaseChange', message => {
+      if (this.debug) {
+        console.log('Phase change:', message);
+      }
+      gameState.setPhase(message.phase);
     });
   }
   
@@ -181,7 +297,41 @@ class NetworkManager {
   }
   
   /**
-   * Send player movement to the server
+   * Send player input to the server
+   * @param {Object} inputState - Player input state
+   */
+  sendPlayerInput(inputState) {
+    // Rate limit input messages
+    const now = Date.now();
+    if (now - this.lastInputTime < this.inputSendRate) {
+      // Store input for sending in next allowed time slot
+      this.lastInput = { ...inputState };
+      return;
+    }
+    
+    this.lastInputTime = now;
+    
+    // Send input to server
+    this.sendMessage('playerInput', inputState);
+    
+    // Clear stored input
+    this.lastInput = null;
+  }
+  
+  /**
+   * Process any pending inputs (called from game update loop)
+   */
+  processInputs() {
+    if (this.lastInput) {
+      const now = Date.now();
+      if (now - this.lastInputTime >= this.inputSendRate) {
+        this.sendPlayerInput(this.lastInput);
+      }
+    }
+  }
+  
+  /**
+   * Legacy method: Send player movement to the server directly
    * @param {number} x - X position
    * @param {number} y - Y position
    */
