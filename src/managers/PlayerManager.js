@@ -1,135 +1,150 @@
 // src/managers/PlayerManager.js
-import networkManager from '../systems/NetworkManager.js';
 
 export class PlayerManager {
-  constructor(scene) {
+  constructor(scene, playerId, playerName) {
     this.scene = scene;
-    this.localPlayer = null;
+    this.playerId = playerId;
+    this.playerName = playerName;
+    
+    // Player entities
+    this.player = null;
+    this.nameLabel = null;
+    
+    // Other players
     this.otherPlayers = {};
-    this.playerNameLabels = {};
-  }
-  
-  initialize() {
-    console.log("Initializing PlayerManager");
+    this.otherPlayerLabels = {};
+    
+    // Initialize player
     this.createLocalPlayer();
   }
   
+  /**
+   * Create the local player entity
+   */
   createLocalPlayer() {
-    console.log("Creating local player");
-    
     // Create player sprite
-    this.localPlayer = this.scene.add.sprite(400, 300, 'character');
-    this.localPlayer.setTint(0x00ff00); // Green for current player
+    this.player = this.scene.add.sprite(400, 300, 'character');
+    this.player.setTint(0x00ff00); // Green for local player
+    this.player.setDepth(10);
     
     // Add physics
-    this.scene.physics.add.existing(this.localPlayer);
+    this.scene.physics.add.existing(this.player);
     
     // Add name label
-    this.playerNameLabels[this.scene.playerId] = this.scene.add.text(
-      400, 260, this.scene.playerName, 
-      { fontSize: '14px', fill: '#ffff00' }
-    ).setOrigin(0.5);
+    this.nameLabel = this.scene.add.text(400, 260, this.playerName, {
+      fontSize: '14px',
+      fill: '#ffff00'
+    }).setOrigin(0.5).setDepth(10);
     
-    // Camera follows player
-    this.scene.cameras.main.startFollow(this.localPlayer);
+    // Make camera follow player
+    this.scene.cameras.main.startFollow(this.player);
+    
+    console.log(`Local player created at (${this.player.x}, ${this.player.y})`);
   }
   
-  createOtherPlayerSprite(sessionId, player) {
-    console.log(`Creating sprite for player ${sessionId}`);
-    
-    // Skip if already added or it's the current player
-    if (this.otherPlayers[sessionId] || sessionId === this.scene.playerId) {
-      console.log(`Skipping player creation for ${sessionId}`);
-      return;
-    }
-    
-    // Get initial position
-    let startX = 400;
-    let startY = 300;
-    
-    // Use player's position if available
-    if (player.position) {
-      startX = player.position.x || startX;
-      startY = player.position.y || startY;
-    }
-    
-    // Create sprite for other player
-    const playerSprite = this.scene.add.sprite(startX, startY, 'character');
-    playerSprite.setTint(0x00aaff); // Blue for other players
-    
-    // Add physics
-    this.scene.physics.add.existing(playerSprite);
-    
-    // Add name label
-    const nameLabel = this.scene.add.text(
-      startX,
-      startY - 40,
-      player.name || 'Unknown',
-      { fontSize: '14px', fill: '#ffffff' }
-    ).setOrigin(0.5);
-    
-    // Store references
-    this.otherPlayers[sessionId] = playerSprite;
-    this.playerNameLabels[sessionId] = nameLabel;
-    
-    console.log(`Added player ${sessionId} at position ${startX}, ${startY}`);
+  /**
+   * Get current player position
+   * @returns {Object} - Player position {x, y}
+   */
+  getPlayerPosition() {
+    if (!this.player) return { x: 0, y: 0 };
+    return { x: this.player.x, y: this.player.y };
   }
   
-  removeOtherPlayer(sessionId) {
-    // Skip if this is the current player
-    if (sessionId === this.scene.playerId) return;
+  /**
+   * Set player position
+   * @param {number} x - X position
+   * @param {number} y - Y position
+   */
+  setPlayerPosition(x, y) {
+    if (!this.player) return;
     
-    console.log(`Removing player: ${sessionId}`);
+    this.player.x = x;
+    this.player.y = y;
     
-    // Remove sprite if exists
-    if (this.otherPlayers[sessionId]) {
-      this.otherPlayers[sessionId].destroy();
-      delete this.otherPlayers[sessionId];
-    }
-    
-    // Remove name label if exists
-    if (this.playerNameLabels[sessionId]) {
-      this.playerNameLabels[sessionId].destroy();
-      delete this.playerNameLabels[sessionId];
+    // Update name label position
+    if (this.nameLabel) {
+      this.nameLabel.x = x;
+      this.nameLabel.y = y - 40;
     }
   }
   
+  /**
+   * Update or create other player
+   * @param {string} id - Player ID
+   * @param {number} x - X position
+   * @param {number} y - Y position
+   * @param {string} name - Player name
+   */
+  updateOtherPlayer(id, x, y, name) {
+    // Skip if it's the local player
+    if (id === this.playerId) return;
+    
+    // Create if doesn't exist
+    if (!this.otherPlayers[id]) {
+      this.otherPlayers[id] = this.scene.add.sprite(x, y, 'character');
+      this.otherPlayers[id].setTint(0x00aaff); // Blue for other players
+      
+      // Add name label
+      this.otherPlayerLabels[id] = this.scene.add.text(x, y - 40, 
+        name || `Player_${id.substring(0, 4)}`, {
+        fontSize: '14px',
+        fill: '#ffffff'
+      }).setOrigin(0.5);
+      
+      console.log(`Created other player ${id} at (${x}, ${y})`);
+    }
+    
+    // Update target position (will be interpolated in update)
+    this.otherPlayers[id].targetX = x;
+    this.otherPlayers[id].targetY = y;
+  }
+  
+  /**
+   * Remove other player
+   * @param {string} id - Player ID
+   */
+  removeOtherPlayer(id) {
+    // Skip if it's the local player
+    if (id === this.playerId) return;
+    
+    // Remove sprite
+    if (this.otherPlayers[id]) {
+      this.otherPlayers[id].destroy();
+      delete this.otherPlayers[id];
+    }
+    
+    // Remove name label
+    if (this.otherPlayerLabels[id]) {
+      this.otherPlayerLabels[id].destroy();
+      delete this.otherPlayerLabels[id];
+    }
+    
+    console.log(`Removed player ${id}`);
+  }
+  
+  /**
+   * Update other players with interpolation
+   * @param {number} delta - Time since last update in ms
+   */
   updateOtherPlayers(delta) {
-    for (const id in this.otherPlayers) {
-      // Skip if this is the current player
-      if (id === this.scene.playerId) continue;
-      
-      const sprite = this.otherPlayers[id];
-      const serverPlayer = this.scene.room.state.players[id];
-      
-      // Skip if server player doesn't exist or has no position
-      if (!serverPlayer || !serverPlayer.position) continue;
-      
-      // Apply interpolation to smooth updates
-      sprite.x = Phaser.Math.Linear(sprite.x, serverPlayer.position.x, 0.3);
-      sprite.y = Phaser.Math.Linear(sprite.y, serverPlayer.position.y, 0.3);
-      
-      // Update name label position
-      if (this.playerNameLabels[id]) {
-        this.playerNameLabels[id].x = sprite.x;
-        this.playerNameLabels[id].y = sprite.y - 40;
-      }
-    }
-  }
-  
-  checkMissingPlayers() {
-    if (!this.scene.room || !this.scene.room.state || !this.scene.room.state.players) return;
+    const lerpFactor = 0.3; // Adjust for smoother/faster interpolation
     
-    // Check for players in room state that we don't have locally
-    for (const id in this.scene.room.state.players) {
-      if (id !== this.scene.playerId && !this.otherPlayers[id]) {
-        console.log(`Adding previously missed player: ${id}`);
-        this.createOtherPlayerSprite(id, this.scene.room.state.players[id]);
+    for (const id in this.otherPlayers) {
+      const player = this.otherPlayers[id];
+      
+      // Skip if no target position
+      if (player.targetX === undefined || player.targetY === undefined) continue;
+      
+      // Apply interpolation
+      player.x = Phaser.Math.Linear(player.x, player.targetX, lerpFactor);
+      player.y = Phaser.Math.Linear(player.y, player.targetY, lerpFactor);
+      
+      // Update name label
+      if (this.otherPlayerLabels[id]) {
+        this.otherPlayerLabels[id].x = player.x;
+        this.otherPlayerLabels[id].y = player.y - 40;
       }
     }
-  }
-  
-  getPlayerCount() {
-    return Object.keys(this.otherPlayers).length + 1; // +1 for local player
   }
 }

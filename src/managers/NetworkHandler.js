@@ -1,155 +1,160 @@
 // src/managers/NetworkHandler.js
-import networkManager from '../systems/NetworkManager.js';
-import gameState from '../systems/GameState.js';
 
 export class NetworkHandler {
-  constructor(scene) {
+  constructor(scene, room, playerId) {
     this.scene = scene;
-    this.serverStateReceived = false;
-  }
-  
-  initialize() {
-    console.log("Initializing NetworkHandler");
+    this.room = room;
+    this.playerId = playerId;
+    this.playerManager = null;
+    this.inputHandler = null;
+    this.reconciliationManager = null;
     
-    // Setup reconciliation handlers
-    networkManager.setupReconciliationHandlers();
-    
-    // Set up state listeners
-    this.setupStateListeners();
+    // Last received sequence from server
+    this.lastProcessedSequence = 0;
     
     // Set up message handlers
     this.setupMessageHandlers();
   }
   
-  setupStateListeners() {
-    console.log("Setting up state listeners");
-    
-    // Listen for state changes (add players that join later)
-    this.scene.room.onStateChange(state => {
-      // Process players in state
-      if (state && state.players) {
-        for (const id in state.players) {
-          if (id !== this.scene.playerId && !this.scene.playerManager.otherPlayers[id]) {
-            console.log(`Processing player from state change: ${id}`);
-            this.scene.playerManager.createOtherPlayerSprite(id, state.players[id]);
-          }
-        }
-      }
-    });
+  /**
+   * Set player manager reference
+   * @param {PlayerManager} playerManager - Player manager instance
+   */
+  setPlayerManager(playerManager) {
+    this.playerManager = playerManager;
   }
   
+  /**
+   * Set input handler reference
+   * @param {InputHandler} inputHandler - Input handler instance
+   */
+  setInputHandler(inputHandler) {
+    this.inputHandler = inputHandler;
+  }
+  
+  /**
+   * Set reconciliation manager reference
+   * @param {ReconciliationManager} reconciliationManager - Reconciliation manager instance
+   */
+  setReconciliationManager(reconciliationManager) {
+    this.reconciliationManager = reconciliationManager;
+  }
+  
+  /**
+   * Set up message handlers
+   */
   setupMessageHandlers() {
-    // Handle player joined events
-    this.scene.room.onMessage("playerJoined", (message) => {
-      console.log(`Player joined message received:`, message);
-      
-      // Skip if it's the current player
-      if (message.id === this.scene.playerId) return;
-      
-      // Check if we already have this player
-      if (this.scene.playerManager.otherPlayers[message.id]) {
-        console.log(`Already tracking player ${message.id}`);
-        return;
-      }
-      
-      console.log(`New player joined: ${message.id} (${message.name})`);
-      
-      // Create a new player entry
-      const newPlayer = {
-        name: message.name,
-        position: message.position || { x: 400, y: 300 }
-      };
-      
-      // Create sprite for the player
-      this.scene.playerManager.createOtherPlayerSprite(message.id, newPlayer);
-      
-      // Add to game state
-      gameState.addPlayer(message.id, newPlayer);
-    });
+    if (!this.room) {
+      console.error("Room not available for network handler");
+      return;
+    }
     
-    // Handle player left events
-    this.scene.room.onMessage("playerLeft", (message) => {
-      console.log(`Player left message received:`, message);
-      
-      // Remove the player sprite
-      this.scene.playerManager.removeOtherPlayer(message.id);
-      
-      // Remove from game state
-      gameState.removePlayer(message.id);
-    });
+    // Handle input acknowledgement
+    this.room.onMessage("inputAck", this.handleInputAck.bind(this));
     
-    // Handle player movement messages
-    this.scene.room.onMessage("playerMoved", (message) => {
-      // Skip if it's the current player (handled by reconciliation)
-      if (message.id === this.scene.playerId) return;
-      
-      // If we don't have this player yet, create them
-      if (!this.scene.playerManager.otherPlayers[message.id]) {
-        const newPlayer = {
-          name: `Player_${message.id.substring(0, 4)}`,
-          position: { x: message.x, y: message.y }
-        };
-        this.scene.playerManager.createOtherPlayerSprite(message.id, newPlayer);
-      } else {
-        // Store server position for interpolation
-        const sprite = this.scene.playerManager.otherPlayers[message.id];
-        sprite.serverX = message.x;
-        sprite.serverY = message.y;
-      }
-    });
+    // Handle player movement
+    this.room.onMessage("playerMoved", this.handlePlayerMoved.bind(this));
     
-    // Handle phase change
-    this.scene.room.onMessage("phaseChange", (message) => {
-      console.log(`Phase changed to: ${message.phase}`);
-      gameState.setPhase(message.phase);
-      
-      // Update UI
-      this.scene.uiManager.updatePhase(message.phase);
-    });
+    // Handle player joined
+    this.room.onMessage("playerJoined", this.handlePlayerJoined.bind(this));
     
-    // Handle global events
-    this.scene.room.onMessage("globalEvent", (message) => {
-      console.log("Global event:", message);
-      this.scene.uiManager.showGlobalEventNotification(message.message);
-    });
-    
-    // Handle game end
-    this.scene.room.onMessage("gameEnded", (message) => {
-      console.log("Game ended:", message);
-      
-      // Show winner announcement
-      if (message.winner) {
-        const isCurrentPlayer = message.winner.id === this.scene.playerId;
-        const text = isCurrentPlayer ? 
-          'YOU WON THE GAME!' : 
-          `${message.winner.name} won the game!`;
-        
-        this.scene.uiManager.showAnnouncement(text, 0xffdd00);
-      } else {
-        this.scene.uiManager.showAnnouncement('GAME OVER', 0xff0000);
-      }
-      
-      // Set timeout to return to lobby
-      this.scene.time.delayedCall(5000, () => {
-        this.scene.scene.start('LobbyScene');
-      });
-    });
+    // Handle player left
+    this.room.onMessage("playerLeft", this.handlePlayerLeft.bind(this));
   }
   
-  applyReconciliation() {
-    // Apply server reconciliation to local player
-    networkManager.applyServerReconciliation(this.scene.playerManager.localPlayer);
+  /**
+   * Handle input acknowledgement
+   * @param {Object} message - Input acknowledgement message
+   */
+  handleInputAck(message) {
+    console.log(`Input acknowledged: seq=${message.seq}, position=(${message.x}, ${message.y})`);
     
-    // Update name label after reconciliation
-    if (this.scene.playerManager.playerNameLabels[this.scene.playerId]) {
-      const label = this.scene.playerManager.playerNameLabels[this.scene.playerId];
-      label.x = this.scene.playerManager.localPlayer.x;
-      label.y = this.scene.playerManager.localPlayer.y - 40;
+    // Update last processed sequence
+    this.lastProcessedSequence = message.seq;
+    
+    // Clear acknowledged inputs
+    if (this.inputHandler) {
+      this.inputHandler.handleInputAck(message.seq);
+    }
+    
+    // Reconcile if positions don't match
+    if (this.reconciliationManager) {
+      this.reconciliationManager.reconcile({
+        x: message.x,
+        y: message.y
+      }, message.seq);
     }
   }
   
-  sendPlayerInput(inputState) {
-    // Send input to network manager
-    networkManager.sendPlayerInput(inputState);
+  /**
+   * Handle player moved message
+   * @param {Object} message - Player moved message
+   */
+  handlePlayerMoved(message) {
+    // Skip if it's the local player (handled by reconciliation)
+    if (message.id === this.playerId) return;
+    
+    console.log(`Player ${message.id} moved to (${message.x}, ${message.y})`);
+    
+    // Update other player position
+    if (this.playerManager) {
+      this.playerManager.updateOtherPlayer(
+        message.id,
+        message.x,
+        message.y,
+        message.name
+      );
+    }
+  }
+  
+  /**
+   * Handle player joined message
+   * @param {Object} message - Player joined message
+   */
+  handlePlayerJoined(message) {
+    // Skip if it's the local player
+    if (message.id === this.playerId) return;
+    
+    console.log(`Player joined: ${message.id} (${message.name})`);
+    
+    // Create other player
+    if (this.playerManager) {
+      const x = message.position ? message.position.x : 400;
+      const y = message.position ? message.position.y : 300;
+      
+      this.playerManager.updateOtherPlayer(
+        message.id,
+        x,
+        y,
+        message.name
+      );
+    }
+  }
+  
+  /**
+   * Handle player left message
+   * @param {Object} message - Player left message
+   */
+  handlePlayerLeft(message) {
+    console.log(`Player left: ${message.id}`);
+    
+    // Remove other player
+    if (this.playerManager) {
+      this.playerManager.removeOtherPlayer(message.id);
+    }
+  }
+  
+  /**
+   * Send input to server
+   * @param {Object} input - Input command
+   */
+  sendInput(input) {
+    if (!this.room) return;
+    
+    try {
+      this.room.send("playerInput", input);
+    } catch (error) {
+      console.error("Error sending input to server:", error);
+    }
   }
 }

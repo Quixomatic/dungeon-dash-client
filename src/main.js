@@ -11,8 +11,15 @@ gameState.init({
   gameConfig: {
     maxPlayers: 100,
     minPlayersToStart: 2,
-    gameDuration: 10 * 60 * 1000 // 10 minutes
-  }
+    gameDuration: 10 * 60 * 1000, // 10 minutes
+    debug: true // Enable debug logging
+  },
+  debug: true
+});
+
+// Initialize network manager with debug enabled
+networkManager.init({
+  debug: true
 });
 
 const config = {
@@ -24,7 +31,7 @@ const config = {
     default: "arcade",
     arcade: {
       gravity: { y: 0 },
-      debug: false,
+      debug: false
     },
   },
   fps: {
@@ -34,9 +41,10 @@ const config = {
   scene: [LobbyScene, GameScene, ResultsScene],
 };
 
+// Create game instance
 window.game = new Phaser.Game(config);
 
-// Add an event listener to update player count in the UI
+// Update player count in UI
 window.addEventListener('playerCountUpdate', (event) => {
   const playerCountElement = document.getElementById('player-count');
   if (playerCountElement) {
@@ -44,6 +52,12 @@ window.addEventListener('playerCountUpdate', (event) => {
   }
 });
 
-// For debugging in browser console
+// Make objects available for debugging in browser console
 window.gameState = gameState;
 window.networkManager = networkManager;
+
+// Log when game is ready
+window.addEventListener('load', () => {
+  console.log('Dungeon Dash Royale started');
+  console.log('Debug mode enabled - check console for logs');
+});

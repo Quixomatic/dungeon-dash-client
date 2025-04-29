@@ -1,8 +1,8 @@
 // src/scenes/LobbyScene.js
 import Phaser from 'phaser';
-import networkManager from '../systems/NetworkManager.js';
-import gameState from '../systems/GameState.js';
 import { createDebugHelper } from '../utils/debug.js';
+import gameState from '../systems/GameState.js';
+import networkManager from '../systems/NetworkManager.js';
 
 export class LobbyScene extends Phaser.Scene {
   constructor() {
@@ -31,6 +31,13 @@ export class LobbyScene extends Phaser.Scene {
     // Reset game state to lobby phase
     gameState.reset();
     gameState.setPhase('lobby');
+    
+    // Create debug helper
+    this.debug = createDebugHelper(this, {
+      sceneName: 'LOBBY SCENE',
+      sceneLabelColor: '#ff9900',
+      y: 480
+    });
     
     // UI elements
     this.add.text(400, 100, 'Dungeon Dash Royale', {
@@ -82,16 +89,15 @@ export class LobbyScene extends Phaser.Scene {
       fontStyle: 'bold'
     }).setOrigin(0.5).setVisible(false);
     
-    // Create debug helper
-    this.debug = createDebugHelper(this, {
-      sceneName: 'LOBBY SCENE',
-      sceneLabelColor: '#ff9900',
-      y: 480
+    // Debug info for testing
+    this.debugText = this.add.text(20, 550, 'Open multiple browser tabs to test multiplayer', {
+      fontSize: '14px',
+      fill: '#aaa'
     });
     
     // Set up phase change listener
     gameState.addEventListener('phaseChange', data => {
-      if (data.newPhase === 'playing') {
+      if (data.newPhase === 'dungeon' || data.newPhase === 'gauntlet') {
         this.startGame();
       }
     });
@@ -133,19 +139,14 @@ export class LobbyScene extends Phaser.Scene {
       this.registry.set('colyseusRoom', room);
       this.registry.set('playerName', this.playerName);
       
+      // Add player to game state
+      gameState.addPlayer(room.sessionId, {
+        name: this.playerName,
+        position: { x: 400, y: 300 }
+      });
+      
       // Add message handlers
-      networkManager.addMessageHandler('countdownStarted', message => {
-        this.countdownText.setText(`Game starting in ${message.seconds}s`);
-        this.countdownText.setVisible(true);
-      });
-      
-      networkManager.addMessageHandler('countdownUpdate', message => {
-        this.countdownText.setText(`Game starting in ${message.seconds}s`);
-      });
-      
-      networkManager.addMessageHandler('globalEvent', message => {
-        this.showGlobalEventNotification(message.message);
-      });
+      this.addMessageHandlers(room);
       
       // Update DOM elements
       const playerCountElement = document.getElementById('player-count');
@@ -157,6 +158,41 @@ export class LobbyScene extends Phaser.Scene {
       console.error("Connection error:", error);
       this.statusText.setText('Connection error: ' + error.message);
     }
+  }
+
+  addMessageHandlers(room) {
+    // Add additional message handlers specific to the lobby
+    room.onMessage('countdownStarted', message => {
+      this.countdownText.setText(`Game starting in ${message.seconds}s`);
+      this.countdownText.setVisible(true);
+    });
+    
+    room.onMessage('countdownUpdate', message => {
+      this.countdownText.setText(`Game starting in ${message.seconds}s`);
+    });
+    
+    room.onMessage('countdownCancelled', message => {
+      this.countdownText.setVisible(false);
+      this.statusText.setText(`Countdown cancelled: ${message.reason}`);
+    });
+    
+    room.onMessage('globalEvent', message => {
+      this.showGlobalEventNotification(message.message);
+    });
+    
+    // Handle welcome message
+    room.onMessage('welcome', message => {
+      this.statusText.setText(message.message);
+    });
+    
+    // Handle player counts
+    room.onMessage('playerJoined', message => {
+      this.playerCountText.setText(`Players: ${message.playerCount} / 100`);
+    });
+    
+    room.onMessage('playerLeft', message => {
+      this.playerCountText.setText(`Players: ${message.playerCount} / 100`);
+    });
   }
 
   showGlobalEventNotification(message) {
