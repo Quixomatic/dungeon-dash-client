@@ -12,12 +12,12 @@ export class InputHandler {
     this.inputSequence = 0;
     this.pendingInputs = [];
     
-    // Movement constants
-    this.moveSpeed = 300; // pixels per second
+    // Movement constants - MATCH WITH SERVER
+    this.moveSpeed = 300; // pixels per second - must match server's PlayerState.moveSpeed
     
     // Input sending rate limiting
     this.lastInputTime = 0;
-    this.inputSendRate = 16.67; // ~60Hz
+    this.inputSendRate = 16.67; // ~60Hz - match server tick rate
   }
   
   /**
@@ -77,25 +77,27 @@ export class InputHandler {
   applyInput(input) {
     if (!this.playerManager) return;
     
-    // Calculate movement amount
+    // Calculate movement amount - EXACTLY MATCH SERVER CALCULATION
     const moveAmount = (this.moveSpeed * input.delta) / 1000;
     
     // Get player's current position
     const position = this.playerManager.getPlayerPosition();
     const newPosition = { ...position };
     
-    // Apply movement based on input
+    // Apply movement based on input - USE SAME APPROACH AS SERVER
     if (input.left) newPosition.x -= moveAmount;
     if (input.right) newPosition.x += moveAmount;
     if (input.up) newPosition.y -= moveAmount;
     if (input.down) newPosition.y += moveAmount;
     
-    // Apply boundary constraints
+    // Apply boundary constraints - MATCH SERVER CONSTANTS
     newPosition.x = Math.max(0, Math.min(newPosition.x, 800));
     newPosition.y = Math.max(0, Math.min(newPosition.y, 600));
     
     // Update player position
     this.playerManager.setPlayerPosition(newPosition.x, newPosition.y);
+
+    console.log(input.seq, input.delta, moveAmount, newPosition.x, newPosition.y);
   }
   
   /**
@@ -109,11 +111,15 @@ export class InputHandler {
     
     this.lastInputTime = now;
     
-    // Get the most recent input
-    const input = this.pendingInputs[this.pendingInputs.length - 1];
+    // CHANGE: Instead of just sending the most recent input,
+    // send ALL pending inputs that haven't been acknowledged yet
+    // This ensures no inputs are lost
     
-    // Send to server
-    this.networkHandler.sendInput(input);
+    // Send all pending inputs to server
+    this.networkHandler.sendInputBatch(this.pendingInputs);
+    
+    // NOTE: Do NOT clear pendingInputs here - wait for server ack
+    // We'll keep them until the server acknowledges processing them
   }
   
   /**
@@ -122,7 +128,11 @@ export class InputHandler {
    */
   handleInputAck(sequence) {
     // Remove acknowledged inputs from pending list
-    this.pendingInputs = this.pendingInputs.filter(input => input.seq > sequence);
+    if (sequence !== undefined) {
+      // Only remove inputs with sequence <= acknowledged sequence
+      this.pendingInputs = this.pendingInputs.filter(input => input.seq > sequence);
+      console.log(`Acknowledged inputs up to seq ${sequence}, remaining: ${this.pendingInputs.length}`);
+    }
   }
   
   /**
@@ -131,6 +141,8 @@ export class InputHandler {
    */
   reapplyPendingInputs(startPosition) {
     if (!this.playerManager) return;
+
+    console.log('Pending Inputs', this.pendingInputs);
     
     // Reset player to authoritative position
     this.playerManager.setPlayerPosition(startPosition.x, startPosition.y);

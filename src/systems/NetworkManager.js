@@ -228,7 +228,7 @@ class NetworkManager {
 
     this.addMessageHandler("leaderboardUpdate", (message) => {
       if (this.debug) {
-        console.log("Leaderboard update:", message);
+        //console.log("Leaderboard update:", message);
       }
       // Update player scores
     });

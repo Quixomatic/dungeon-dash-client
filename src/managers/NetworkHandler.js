@@ -157,4 +157,24 @@ export class NetworkHandler {
       console.error("Error sending input to server:", error);
     }
   }
+
+  /**
+   * Send a batch of inputs to the server
+   * @param {Array} inputs - Array of input commands
+   */
+  sendInputBatch(inputs) {
+    if (!this.room || inputs.length === 0) return;
+    
+    try {
+      // Send the entire batch of inputs to ensure nothing is lost
+      this.room.send("playerInputBatch", {
+        inputs: inputs,
+        timestamp: Date.now()
+      });
+      
+      console.log(`Sent input batch with ${inputs.length} inputs, sequences: ${inputs.map(input => input.seq).join(', ')}`);
+    } catch (error) {
+      console.error("Error sending input batch to server:", error);
+    }
+  }
 }

@@ -6,8 +6,8 @@ export class ReconciliationManager {
       this.playerManager = null;
       this.inputHandler = null;
       
-      // Reconciliation settings
-      this.reconciliationThreshold = 2; // Distance threshold for reconciliation
+      // Reconciliation settings - INCREASED THRESHOLD
+      this.reconciliationThreshold = 12; // Increased from 5 to 20 pixels
       this.reconciliationCount = 0;
       this.debugEnabled = true;
     }
