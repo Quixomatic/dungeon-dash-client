@@ -24,8 +24,9 @@ networkManager.init({
 
 const config = {
   type: Phaser.AUTO,
-  width: 800,
-  height: 600,
+  // Use window dimensions or fallback to defaults
+  width: window.innerWidth || 800,
+  height: window.innerHeight || 600,
   parent: "game-container",
   physics: {
     default: "arcade",
@@ -34,11 +35,12 @@ const config = {
       debug: false
     },
   },
-  /*fps: {
-    target: 60,      // Force 60 FPS
-    forceSetTimeOut: true  // Use setTimeout even if requestAnimationFrame is available
-  },*/
   scene: [LobbyScene, GameScene, ResultsScene],
+  // Add scale manager settings
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH
+  }
 };
 
 // Create game instance

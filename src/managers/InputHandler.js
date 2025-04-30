@@ -91,8 +91,8 @@ export class InputHandler {
     if (input.down) newPosition.y += moveAmount;
     
     // Apply boundary constraints - MATCH SERVER CONSTANTS
-    newPosition.x = Math.max(0, Math.min(newPosition.x, 800));
-    newPosition.y = Math.max(0, Math.min(newPosition.y, 600));
+    newPosition.x = Math.max(0, Math.min(newPosition.x, 20000));
+    newPosition.y = Math.max(0, Math.min(newPosition.y, 20000));
     
     // Update player position
     this.playerManager.setPlayerPosition(newPosition.x, newPosition.y);

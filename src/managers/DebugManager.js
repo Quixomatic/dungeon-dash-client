@@ -98,4 +98,19 @@ export class DebugManager {
       }
     });
   }
+
+  destroy() {
+    if (this.debugGraphics) {
+      this.debugGraphics.clear();
+      this.debugGraphics.destroy();
+    }
+    
+    if (this.debug && this.debug.debugText) {
+      this.debug.debugText.destroy();
+    }
+    
+    if (this.debug && this.debug.sceneLabel) {
+      this.debug.sceneLabel.destroy();
+    }
+  }
 }

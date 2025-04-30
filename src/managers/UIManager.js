@@ -100,4 +100,21 @@ export class UIManager {
       ease: 'Bounce.Out'
     });
   }
+
+  handleResize(width, height) {
+    // Update UI positions based on new screen size
+    if (this.infoText) {
+      this.infoText.setPosition(20, 20);
+    }
+    
+    if (this.playerCountText) {
+      this.playerCountText.setPosition(20, 50);
+    }
+    
+    if (this.phaseText) {
+      this.phaseText.setPosition(20, 80);
+    }
+    
+    // Update any other UI elements...
+  }
 }
