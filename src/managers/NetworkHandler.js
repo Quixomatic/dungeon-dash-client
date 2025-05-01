@@ -1,5 +1,6 @@
 // src/managers/NetworkHandler.js
 
+
 export class NetworkHandler {
   constructor(scene, room, playerId) {
     this.scene = scene;
@@ -67,7 +68,7 @@ export class NetworkHandler {
    * @param {Object} message - Input acknowledgement message
    */
   handleInputAck(message) {
-    console.log(`Input acknowledged: seq=${message.seq}, position=(${message.x}, ${message.y})`);
+    //console.log(`Input acknowledged: seq=${message.seq}, position=(${message.x}, ${message.y})`);
     
     // Update last processed sequence
     this.lastProcessedSequence = message.seq;
@@ -94,7 +95,7 @@ export class NetworkHandler {
     // Skip if it's the local player (handled by reconciliation)
     if (message.id === this.playerId) return;
     
-    console.log(`Player ${message.id} moved to (${message.x}, ${message.y})`);
+    //console.log(`Player ${message.id} moved to (${message.x}, ${message.y})`);
     
     // Update other player position
     if (this.playerManager) {
@@ -115,7 +116,7 @@ export class NetworkHandler {
     // Skip if it's the local player
     if (message.id === this.playerId) return;
     
-    console.log(`Player joined: ${message.id} (${message.name})`);
+    //console.log(`Player joined: ${message.id} (${message.name})`);
     
     // Create other player
     if (this.playerManager) {
@@ -136,7 +137,7 @@ export class NetworkHandler {
    * @param {Object} message - Player left message
    */
   handlePlayerLeft(message) {
-    console.log(`Player left: ${message.id}`);
+    //console.log(`Player left: ${message.id}`);
     
     // Remove other player
     if (this.playerManager) {
@@ -172,7 +173,7 @@ export class NetworkHandler {
         timestamp: Date.now()
       });
       
-      console.log(`Sent input batch with ${inputs.length} inputs, sequences: ${inputs.map(input => input.seq).join(', ')}`);
+      //console.log(`Sent input batch with ${inputs.length} inputs, sequences: ${inputs.map(input => input.seq).join(', ')}`);
     } catch (error) {
       console.error("Error sending input batch to server:", error);
     }

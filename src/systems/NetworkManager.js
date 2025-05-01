@@ -1,5 +1,5 @@
 // src/systems/NetworkManager.js
-import { Client } from "colyseus.js";
+import { Client, getStateCallbacks } from "colyseus.js";
 import gameState from "./GameState.js";
 
 class NetworkManager {
@@ -107,56 +107,87 @@ class NetworkManager {
    * @private
    */
   setupRoomHandlers() {
-    if (!this.room) return;
-
-    // Handle state changes
+    if (!this.room) {
+      console.error("Room not available for NetworkManager");
+      return;
+    }
+  
+    console.log("Setting up room handlers");
+    
+    // Listen for state changes
     this.room.onStateChange((state) => {
-      // Update game state based on room state
-
-      // Handle players
-      if (state.players) {
-        // Clear missing players
-        const currentIds = new Set();
-        for (const id in state.players) {
-          currentIds.add(id);
-
-          const playerData = state.players[id];
-          gameState.addPlayer(id, {
-            name: playerData.name,
-            position: playerData.position,
-            isReady: playerData.ready,
-            score: playerData.currentProgress || 0,
-            health: playerData.health || 100,
-            maxHealth: playerData.maxHealth || 100,
-            level: playerData.level || 1,
-          });
-        }
-
-        // Remove players not in state
-        for (const [id] of gameState.getAllPlayers()) {
-          if (!currentIds.has(id)) {
-            gameState.removePlayer(id);
-          }
-        }
-      }
-
-      // Update game phase
-      if (
-        state.gameStarted &&
-        !state.gameEnded &&
-        gameState.getPhase() === "lobby"
-      ) {
-        gameState.setPhase("dungeon");
-      } else if (state.gameEnded && gameState.getPhase() !== "results") {
-        gameState.setPhase("results");
-      } else if (state.phase && state.phase !== gameState.getPhase()) {
+      //console.log("State changed", state);
+      
+      // Update phase if changed
+      if (state.phase && state.phase !== gameState.getPhase()) {
+        console.log(`Phase changed from ${gameState.getPhase()} to ${state.phase}`);
         gameState.setPhase(state.phase);
+      }
+    });
+    
+    // Wait for initial state to be fully available
+    this.room.onStateChange.once(() => {
+      console.log("Initial state received");
+      
+      // Verify players exists
+      if (this.room.state.players) {
+        console.log("Setting up player handlers");
+        
+        // Set up player join handler
+        this.room.state.players.onAdd = (player, sessionId) => {
+          console.log(`Player added handler: ${sessionId}`, player.position);
+          
+          gameState.addPlayer(sessionId, {
+            name: player.name || `Player_${sessionId.substring(0, 4)}`,
+            position: { x: player.position.x, y: player.position.y },
+            isLocalPlayer: sessionId === this.room.sessionId
+          });
+        };
+        
+        // Set up player leave handler
+        this.room.state.players.onRemove = (player, sessionId) => {
+          console.log(`Player removed: ${sessionId}`);
+          gameState.removePlayer(sessionId);
+        };
+        
+        // Handle existing players (that joined before we set up handlers)
+        this.room.state.players.forEach((player, sessionId) => {
+          console.log(`Processing existing player: ${sessionId}`, player.position);
+          
+          gameState.addPlayer(sessionId, {
+            name: player.name || `Player_${sessionId.substring(0, 4)}`,
+            position: { x: player.position.x, y: player.position.y },
+            isLocalPlayer: sessionId === this.room.sessionId
+          });
+          
+          // Set up change listener
+          player.onChange = (changes) => {
+            console.log(`Player ${sessionId} changed`);
+            
+            // Create update
+            const updateData = {};
+            
+            if (player.position) {
+              updateData.position = {
+                x: player.position.x,
+                y: player.position.y
+              };
+            }
+            
+            // Apply updates if any
+            if (Object.keys(updateData).length > 0) {
+              gameState.updatePlayer(sessionId, updateData);
+            }
+          };
+        });
+      } else {
+        console.warn("No players collection in state");
       }
     });
 
     // Set up disconnect handler
     this.room.onLeave((code) => {
-      console.log(`Left room: ${this.room.id}, code: ${code}`);
+      this.debug && console.log(`Left room: ${this.room.id}, code: ${code}`);
       this.connected = false;
       this.room = null;
 
@@ -259,6 +290,7 @@ class NetworkManager {
     });
 
     this.addMessageHandler("playerMoved", (message) => {
+      return;
       if (this.debug) {
         console.log("Player moved:", message);
       }
@@ -310,120 +342,6 @@ class NetworkManager {
     } else {
       console.warn("Cannot send message: not connected");
     }
-  }
-
-  /**
-   * Send player input to the server with sequence number
-   * @param {Object} inputState - Player input state
-   */
-  sendPlayerInput(inputState) {
-    // Rate limit input messages
-    const now = Date.now();
-    if (now - this.lastInputTime < this.inputSendRate) {
-      // Store input for sending in next allowed time slot
-      this.lastInput = {
-        ...inputState,
-        timestamp: now,
-      };
-      return;
-    }
-
-    this.lastInputTime = now;
-
-    // Add sequence number
-    const sequencedInput = {
-      ...inputState,
-      seq: this.inputSequence++,
-      timestamp: now,
-    };
-
-    // Store input for reconciliation
-    this.pendingInputs.push(sequencedInput);
-
-    // Send to server
-    this.sendMessage("playerInput", sequencedInput);
-
-    // Clear stored input
-    this.lastInput = null;
-  }
-
-  /**
-   * Process any pending inputs (called from game update loop)
-   */
-  processInputs() {
-    if (this.lastInput) {
-      const now = Date.now();
-      if (now - this.lastInputTime >= this.inputSendRate) {
-        this.sendPlayerInput(this.lastInput);
-      }
-    }
-  }
-
-  /**
-   * Legacy method: Send player movement to the server directly
-   * @param {number} x - X position
-   * @param {number} y - Y position
-   */
-  sendPlayerMovement(x, y) {
-    this.sendMessage("playerAction", {
-      type: "move",
-      x: x,
-      y: y,
-    });
-  }
-
-  /**
-   * Apply server reconciliation if needed
-   * @param {Phaser.GameObjects.Sprite} playerSprite - Local player sprite
-   */
-  applyServerReconciliation(playerSprite) {
-    if (!this.lastServerState) return;
-
-    // Check if positions are significantly different
-    const serverX = this.lastServerState.position.x;
-    const serverY = this.lastServerState.position.y;
-    const diffX = Math.abs(playerSprite.x - serverX);
-    const diffY = Math.abs(playerSprite.y - serverY);
-
-    // If difference is significant, reconcile
-    if (diffX > 5 || diffY > 5) {
-      console.log(
-        `Reconciling position: local(${playerSprite.x},${playerSprite.y}) server(${serverX},${serverY})`
-      );
-
-      // Set player to server position
-      playerSprite.x = serverX;
-      playerSprite.y = serverY;
-
-      // Re-apply any inputs that haven't been processed by server yet
-      const inputsToReapply = this.pendingInputs.filter(
-        (input) => input.seq > this.lastProcessedInput
-      );
-
-      console.log(`Reapplying ${inputsToReapply.length} inputs`);
-
-      // Clear inputs that have been processed
-      this.pendingInputs = inputsToReapply;
-    }
-  }
-
-  /**
-   * Set up server state and input acknowledgment handlers
-   */
-  setupReconciliationHandlers() {
-    // Input acknowledgment handler
-    this.addMessageHandler("inputAck", (message) => {
-      // Store last processed input sequence
-      this.lastProcessedInput = message.seq;
-
-      // Store last server state for reconciliation
-      this.lastServerState = message;
-
-      // Remove acknowledged inputs from pending list
-      this.pendingInputs = this.pendingInputs.filter(
-        (input) => input.seq > message.seq
-      );
-    });
   }
 
   /**

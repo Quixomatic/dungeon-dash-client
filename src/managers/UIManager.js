@@ -41,14 +41,14 @@ export class UIManager {
   }
   
   updatePlayerCount() {
-    const count = this.scene.playerManager.getPlayerCount();
+    /*const count = this.scene.playerManager.getPlayerCount();
     this.playerCountText.setText(`Players: ${count}`);
     
     // Update DOM element
     const playerCountElement = document.getElementById('player-count');
     if (playerCountElement) {
       playerCountElement.innerText = `Players: ${count}`;
-    }
+    }*/
   }
   
   updatePhase(phase) {

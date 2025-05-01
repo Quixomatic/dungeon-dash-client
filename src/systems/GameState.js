@@ -110,7 +110,7 @@ class GameState {
         });
         
         if (this.debug) {
-          console.log(`Player added: ${id}`);
+          console.log(`Player added: ${id}`, data);
         }
         
         this.notifyListeners('playerJoined', { id, data: this.players.get(id) });

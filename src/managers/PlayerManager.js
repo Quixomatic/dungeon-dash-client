@@ -1,3 +1,5 @@
+import gameState from "../systems/GameState";
+
 // src/managers/PlayerManager.js
 export class PlayerManager {
   constructor(scene, playerId, playerName) {
@@ -17,12 +19,12 @@ export class PlayerManager {
     let initialX = 400;
     let initialY = 300;
 
-    console.log(this.scene.room.state);
+    console.log('Hello???', gameState);
     
     // Try to get position from server
     if (this.scene.room && this.scene.room.state && 
-        this.scene.room.state.players && this.scene.room.state.players[playerId]) {
-      const serverPlayer = this.scene.room.state.players[playerId];
+        this.scene.room.state.players && this.scene.room.state.players.get(playerId)) {
+      const serverPlayer = this.scene.room.state.players.get(playerId);
       initialX = serverPlayer.position.x;
       initialY = serverPlayer.position.y;
       console.log(`Using server position for player: (${initialX}, ${initialY})`);
@@ -169,188 +171,6 @@ export class PlayerManager {
         this.playerNameLabels[id].y = player.y - 40;
       }
     }
-  }
-  
-  /**
-   * Spawn a monster in the world
-   * @param {Object} monsterData - Monster data from server
-   */
-  spawnMonster(monsterData) {
-    // Skip if already exists
-    if (this.monsters[monsterData.id]) return;
-    
-    // Create monster sprite
-    const monster = this.scene.add.sprite(
-      monsterData.x,
-      monsterData.y,
-      'character' // Placeholder, replace with actual monster sprites
-    );
-    
-    // Set color based on monster type
-    let tint;
-    switch (monsterData.name) {
-      case 'Slime':
-        tint = 0x00ff00; // Green
-        break;
-      case 'Goblin':
-        tint = 0xaaff00; // Yellow-green
-        break;
-      case 'Skeleton':
-        tint = 0xffffff; // White
-        break;
-      case 'Zombie':
-        tint = 0x00ffaa; // Cyan-green
-        break;
-      case 'Orc':
-        tint = 0xaaaa00; // Yellow
-        break;
-      default:
-        if (monsterData.isBoss) {
-          tint = 0xff00ff; // Purple for bosses
-        } else {
-          tint = 0xff0000; // Red default
-        }
-    }
-    
-    monster.setTint(tint);
-    monster.setDepth(5);
-    
-    // Add name label if boss
-    if (monsterData.isBoss) {
-      const nameLabel = this.scene.add.text(
-        monsterData.x,
-        monsterData.y - 40,
-        monsterData.name,
-        {
-          fontSize: '16px',
-          fontStyle: 'bold',
-          fill: '#ff00ff',
-          backgroundColor: '#00000080',
-          padding: { x: 4, y: 2 }
-        }
-      ).setOrigin(0.5).setDepth(5);
-      
-      monster.nameLabel = nameLabel;
-      
-      // Add health bar for boss
-      const healthBarBg = this.scene.add.rectangle(
-        monsterData.x,
-        monsterData.y - 25,
-        50,
-        6,
-        0x000000
-      ).setOrigin(0.5).setDepth(5);
-      
-      const healthBar = this.scene.add.rectangle(
-        monsterData.x,
-        monsterData.y - 25,
-        50,
-        6,
-        0xff00ff
-      ).setOrigin(0, 0.5).setDepth(5);
-      
-      monster.healthBar = healthBar;
-      monster.healthBarBg = healthBarBg;
-    }
-    
-    // Store monster data
-    monster.data = monsterData;
-    this.monsters[monsterData.id] = monster;
-  }
-  
-  /**
-   * Spawn an item in the world
-   * @param {Object} itemData - Item data from server
-   */
-  spawnItem(itemData) {
-    // Skip if already exists
-    if (this.items[itemData.id]) return;
-    
-    // Create item sprite
-    const item = this.scene.add.sprite(
-      itemData.x,
-      itemData.y,
-      'character' // Placeholder, replace with actual item sprites
-    );
-    
-    // Set color based on item rarity
-    let tint;
-    switch (itemData.rarity) {
-      case 'common':
-        tint = 0xffffff; // White
-        break;
-      case 'uncommon':
-        tint = 0x00ff00; // Green
-        break;
-      case 'rare':
-        tint = 0x0000ff; // Blue
-        break;
-      case 'epic':
-        tint = 0xff00ff; // Purple
-        break;
-      case 'legendary':
-        tint = 0xffaa00; // Orange
-        break;
-      default:
-        tint = 0xaaaaaa; // Gray default
-    }
-    
-    item.setTint(tint);
-    item.setDepth(4);
-    
-    // Add floating effect
-    this.scene.tweens.add({
-      targets: item,
-      y: item.y - 5,
-      duration: 1000,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut'
-    });
-    
-    // Store item data
-    item.data = itemData;
-    this.items[itemData.id] = item;
-  }
-  
-  /**
-   * Remove a monster from the world
-   * @param {string} id - Monster ID
-   */
-  removeMonster(id) {
-    const monster = this.monsters[id];
-    if (!monster) return;
-    
-    // Remove name label if exists
-    if (monster.nameLabel) {
-      monster.nameLabel.destroy();
-    }
-    
-    // Remove health bar if exists
-    if (monster.healthBar) {
-      monster.healthBar.destroy();
-    }
-    
-    if (monster.healthBarBg) {
-      monster.healthBarBg.destroy();
-    }
-    
-    // Remove monster sprite
-    monster.destroy();
-    delete this.monsters[id];
-  }
-  
-  /**
-   * Remove an item from the world
-   * @param {string} id - Item ID
-   */
-  removeItem(id) {
-    const item = this.items[id];
-    if (!item) return;
-    
-    // Remove item sprite
-    item.destroy();
-    delete this.items[id];
   }
   
   /**

@@ -97,7 +97,7 @@ export class InputHandler {
     // Update player position
     this.playerManager.setPlayerPosition(newPosition.x, newPosition.y);
 
-    console.log(input.seq, input.delta, moveAmount, newPosition.x, newPosition.y);
+    //console.log(input.seq, input.delta, moveAmount, newPosition.x, newPosition.y);
   }
   
   /**
@@ -131,7 +131,7 @@ export class InputHandler {
     if (sequence !== undefined) {
       // Only remove inputs with sequence <= acknowledged sequence
       this.pendingInputs = this.pendingInputs.filter(input => input.seq > sequence);
-      console.log(`Acknowledged inputs up to seq ${sequence}, remaining: ${this.pendingInputs.length}`);
+      //console.log(`Acknowledged inputs up to seq ${sequence}, remaining: ${this.pendingInputs.length}`);
     }
   }
   
@@ -142,7 +142,7 @@ export class InputHandler {
   reapplyPendingInputs(startPosition) {
     if (!this.playerManager) return;
 
-    console.log('Pending Inputs', this.pendingInputs);
+    //console.log('Pending Inputs', this.pendingInputs);
     
     // Reset player to authoritative position
     this.playerManager.setPlayerPosition(startPosition.x, startPosition.y);
