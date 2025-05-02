@@ -1,312 +1,303 @@
 // src/managers/DungeonRenderer.js
+import { getTemplateById, registerTemplates, getTileColor, TILE_TYPES, generateBasicLayout } from '../data/DungeonTemplates.js';
+
+/**
+ * DungeonRenderer - Efficiently renders the dungeon with culling
+ */
 export class DungeonRenderer {
-    constructor(scene) {
-      this.scene = scene;
-      this.tileSize = 32;
-      this.floorColor = 0x333333;
-      this.wallColor = 0x666666;
-      this.corridorColor = 0x444444;
-      this.layers = {
-        floor: null,
-        walls: null,
-        overlay: null
-      };
-      this.minimapGraphics = null;
-      this.minimapScale = 0.1;
-      this.mapData = null;
-    }
+  constructor(scene) {
+    this.scene = scene;
+    this.tileSize = 32;
     
-    init() {
-      // Create layer groups to organize sprites
-      this.layers.floor = this.scene.add.group();
-      this.layers.walls = this.scene.add.group();
-      this.layers.overlay = this.scene.add.group();
-      
-      // Create minimap
-      this.minimapGraphics = this.scene.add.graphics();
-      this.minimapGraphics.setScrollFactor(0); // Fixed to camera
-      this.minimapGraphics.x = this.scene.cameras.main.width - 210;
-      this.minimapGraphics.y = 10;
-      
-      // Debug text for visibility during development
+    // Layer organization
+    this.layers = {
+      background: null,
+      floor: null,
+      walls: null,
+      objects: null,
+      overlay: null
+    };
+    
+    // Minimap
+    this.minimapGraphics = null;
+    this.minimapTexture = null;
+    this.playerMarker = null;
+    this.minimapScale = 0.01; // Scale factor for minimap
+    this.minimapSize = 200; // Size of minimap in pixels
+    
+    // Map data
+    this.mapData = null;
+    
+    // Culling system
+    this.visibleTiles = new Map(); // Map of tile IDs to sprites
+    this.objectPools = {
+      floor: [],
+      wall: [],
+      object: [],
+      corridor: [],
+      overlay: []
+    };
+    
+    // Visible region tracking
+    this.visibleRegion = {
+      startX: 0,
+      startY: 0,
+      endX: 0,
+      endY: 0
+    };
+    
+    // Culling buffer (in tiles)
+    this.cullingBuffer = 3;
+    
+    // Spatial index for fast lookups
+    this.spatialIndex = null;
+    
+    // Debug
+    this.debug = false;
+    this.debugText = null;
+    this.renderStats = {
+      visibleTiles: 0,
+      hiddenTiles: 0,
+      poolSize: 0,
+      renderTime: 0
+    };
+  }
+  
+  /**
+   * Initialize the renderer
+   * @param {Object} options - Configuration options
+   */
+  init(options = {}) {
+    this.debug = options.debug || false;
+    this.tileSize = options.tileSize || 32;
+    
+    // Create layer groups to organize sprites
+    this.layers.background = this.scene.add.group();
+    this.layers.floor = this.scene.add.group();
+    this.layers.walls = this.scene.add.group();
+    this.layers.objects = this.scene.add.group();
+    this.layers.overlay = this.scene.add.group();
+    
+    // Set depths to ensure correct rendering order
+    this.layers.background.setDepth(5);
+    this.layers.floor.setDepth(10);
+    this.layers.walls.setDepth(20);
+    this.layers.objects.setDepth(30);
+    this.layers.overlay.setDepth(100);
+    
+    // Create minimap
+    this.createMinimap();
+    
+    // Debug text
+    if (this.debug) {
       this.debugText = this.scene.add.text(10, 10, "Waiting for map data...", {
-        fontSize: '16px',
-        fill: '#ffffff'
-      }).setScrollFactor(0);
+        fontSize: '14px',
+        fill: '#ffffff',
+        backgroundColor: '#00000080',
+        padding: { x: 5, y: 5 }
+      }).setScrollFactor(0).setDepth(1000);
     }
     
-    renderMap(mapData) {
-      // Store map data
-      this.mapData = mapData;
-      
-      // Debug output to confirm we received map data
-      console.log("Rendering map:", mapData);
-      this.debugText.setText(`Rendering floor ${mapData.floorLevel}: ${mapData.rooms.length} rooms, ${mapData.corridors.length} corridors`);
-      
-      // Clear existing map
-      this.clearMap();
-      
-      // Render rooms first
-      for (const room of mapData.rooms) {
-        this.renderRoom(room);
-      }
-      
-      // Render corridors
-      for (const corridor of mapData.corridors) {
-        this.renderCorridor(corridor);
-      }
-      
-      // Update minimap
-      this.updateMinimap();
-    }
+    // Create a background for the world
+    this.createWorldBackground();
     
-    clearMap() {
-      // Clear all layers
-      this.layers.floor.clear(true, true);
-      this.layers.walls.clear(true, true);
-      this.layers.overlay.clear(true, true);
-      
-      // Clear minimap
-      if (this.minimapGraphics) {
-        this.minimapGraphics.clear();
-      }
-    }
+    return this;
+  }
+  
+  /**
+   * Create a background for the entire world
+   */
+  createWorldBackground() {
+    // Create a dark background
+    this.worldBackground = this.scene.add.rectangle(
+      0, 0, 
+      this.scene.sys.game.config.width * 10, 
+      this.scene.sys.game.config.height * 10,
+      0x111111
+    );
+    this.worldBackground.setOrigin(0.5);
+    this.worldBackground.setDepth(1);
     
-    renderRoom(room) {
-      // Different colors for different room types
-      let floorColor, wallColor;
-      
-      switch (room.type) {
-        case 'spawn':
-          floorColor = 0x8888ff;
-          wallColor = 0x4444aa;
-          break;
-        case 'treasure':
-          floorColor = 0xffff88;
-          wallColor = 0xaaaa44;
-          break;
-        case 'monster':
-          floorColor = 0xff8888;
-          wallColor = 0xaa4444;
-          break;
-        case 'boss':
-          floorColor = 0xff44ff;
-          wallColor = 0xaa22aa;
-          break;
-        case 'shop':
-          floorColor = 0x88ffff;
-          wallColor = 0x44aaaa;
-          break;
-        default:
-          floorColor = this.floorColor;
-          wallColor = this.wallColor;
-      }
-      
-      // Draw floor
-      for (let y = room.y + 1; y < room.y + room.height - 1; y++) {
-        for (let x = room.x + 1; x < room.x + room.width - 1; x++) {
-          const floorTile = this.scene.add.rectangle(
-            x * this.tileSize + this.tileSize / 2,
-            y * this.tileSize + this.tileSize / 2,
-            this.tileSize,
-            this.tileSize,
-            floorColor
-          );
-          
-          this.layers.floor.add(floorTile);
-        }
-      }
-      
-      // Draw walls
-      for (let y = room.y; y < room.y + room.height; y++) {
-        for (let x = room.x; x < room.x + room.width; x++) {
-          if (
-            x === room.x || x === room.x + room.width - 1 ||
-            y === room.y || y === room.y + room.height - 1
-          ) {
-            const wallTile = this.scene.add.rectangle(
-              x * this.tileSize + this.tileSize / 2,
-              y * this.tileSize + this.tileSize / 2,
-              this.tileSize,
-              this.tileSize,
-              wallColor
-            );
-            
-            this.layers.walls.add(wallTile);
-          }
-        }
-      }
-      
-      // Add room label (for development)
-      if (room.type !== 'normal') {
-        const text = this.scene.add.text(
-          (room.x + room.width / 2) * this.tileSize,
-          (room.y + room.height / 2) * this.tileSize,
-          room.type,
-          {
-            fontSize: '14px',
-            fill: '#ffffff',
-            backgroundColor: '#000000',
-            padding: { x: 3, y: 2 }
-          }
-        ).setOrigin(0.5);
-        
-        this.layers.overlay.add(text);
-      }
-    }
+    // Add a grid pattern
+    const gridSize = 500; // Grid cell size
+    const gridGraphics = this.scene.add.graphics();
+    gridGraphics.lineStyle(1, 0x222222, 0.3);
     
-    renderCorridor(corridor) {
-      // Render corridor segments
-      if (corridor.waypoint) {
-        // First segment: start to waypoint
-        this.renderCorridorSegment(corridor.start, corridor.waypoint);
-        
-        // Second segment: waypoint to end
-        this.renderCorridorSegment(corridor.waypoint, corridor.end);
-      } else {
-        // Direct segment: start to end
-        this.renderCorridorSegment(corridor.start, corridor.end);
-      }
-    }
-    
-    renderCorridorSegment(start, end) {
-      const isHorizontal = Math.abs(end.x - start.x) > Math.abs(end.y - start.y);
-      
-      if (isHorizontal) {
-        // Horizontal corridor
-        const x1 = Math.min(start.x, end.x);
-        const x2 = Math.max(start.x, end.x);
-        const y = start.y;
-        
-        // Draw floor
-        for (let x = x1; x <= x2; x++) {
-          const floorTile = this.scene.add.rectangle(
-            x * this.tileSize + this.tileSize / 2,
-            y * this.tileSize + this.tileSize / 2,
-            this.tileSize,
-            this.tileSize,
-            this.corridorColor
-          );
-          
-          this.layers.floor.add(floorTile);
-        }
-      } else {
-        // Vertical corridor
-        const y1 = Math.min(start.y, end.y);
-        const y2 = Math.max(start.y, end.y);
-        const x = start.x;
-        
-        // Draw floor
-        for (let y = y1; y <= y2; y++) {
-          const floorTile = this.scene.add.rectangle(
-            x * this.tileSize + this.tileSize / 2,
-            y * this.tileSize + this.tileSize / 2,
-            this.tileSize,
-            this.tileSize,
-            this.corridorColor
-          );
-          
-          this.layers.floor.add(floorTile);
-        }
-      }
-    }
-    
-    updateMinimap() {
-      if (!this.mapData) return;
-      
-      // Clear previous minimap
-      this.minimapGraphics.clear();
-      
-      // Draw background
-      this.minimapGraphics.fillStyle(0x000000, 0.7);
-      this.minimapGraphics.fillRect(0, 0, 200, 200);
-      
-      // Draw rooms
-      for (const room of this.mapData.rooms) {
-        // Select color based on room type
-        let color;
-        switch (room.type) {
-          case 'spawn': color = 0x8888ff; break;
-          case 'treasure': color = 0xffff88; break;
-          case 'monster': color = 0xff8888; break;
-          case 'boss': color = 0xff44ff; break;
-          case 'shop': color = 0x88ffff; break;
-          default: color = 0xaaaaaa;
-        }
-        
-        this.minimapGraphics.fillStyle(color, 1);
-        this.minimapGraphics.fillRect(
-          room.x * this.tileSize * this.minimapScale,
-          room.y * this.tileSize * this.minimapScale,
-          room.width * this.tileSize * this.minimapScale,
-          room.height * this.tileSize * this.minimapScale
-        );
-      }
-      
-      // Draw corridors
-      this.minimapGraphics.fillStyle(0x777777, 1);
-      
-      for (const corridor of this.mapData.corridors) {
-        if (corridor.waypoint) {
-          this.drawMinimapCorridorSegment(corridor.start, corridor.waypoint);
-          this.drawMinimapCorridorSegment(corridor.waypoint, corridor.end);
-        } else {
-          this.drawMinimapCorridorSegment(corridor.start, corridor.end);
-        }
-      }
-      
-      // Add floor label
-      this.minimapGraphics.lineStyle(1, 0xffffff, 0.8);
-      this.minimapGraphics.strokeRect(0, 0, 200, 200);
-      
-      const floorText = this.scene.add.text(
-        this.minimapGraphics.x + 100, 
-        this.minimapGraphics.y + 185,
-        `Floor ${this.mapData.floorLevel}`,
-        { fontSize: '14px', fill: '#ffffff' }
-      ).setScrollFactor(0).setOrigin(0.5);
-    }
-    
-    drawMinimapCorridorSegment(start, end) {
-      const isHorizontal = Math.abs(end.x - start.x) > Math.abs(end.y - start.y);
-      
-      if (isHorizontal) {
-        // Horizontal corridor
-        const x1 = Math.min(start.x, end.x);
-        const x2 = Math.max(start.x, end.x);
-        const y = start.y;
-        
-        this.minimapGraphics.fillRect(
-          x1 * this.tileSize * this.minimapScale,
-          y * this.tileSize * this.minimapScale,
-          (x2 - x1 + 1) * this.tileSize * this.minimapScale,
-          this.tileSize * this.minimapScale
-        );
-      } else {
-        // Vertical corridor
-        const y1 = Math.min(start.y, end.y);
-        const y2 = Math.max(start.y, end.y);
-        const x = start.x;
-        
-        this.minimapGraphics.fillRect(
-          x * this.tileSize * this.minimapScale,
-          y1 * this.tileSize * this.minimapScale,
-          this.tileSize * this.minimapScale,
-          (y2 - y1 + 1) * this.tileSize * this.minimapScale
-        );
-      }
-    }
-    
-    updateMinimapPlayer(x, y) {
-      // Skip if no minimap
-      if (!this.minimapGraphics) return;
-      
-      // Draw player marker on minimap
-      this.minimapGraphics.fillStyle(0x00ff00, 1);
-      this.minimapGraphics.fillCircle(
-        x * this.minimapScale,
-        y * this.minimapScale,
-        3
+    // Draw horizontal lines
+    for (let y = 0; y <= this.scene.sys.game.config.height * 10; y += gridSize) {
+      gridGraphics.lineBetween(
+        0, y,
+        this.scene.sys.game.config.width * 10, y
       );
     }
+    
+    // Draw vertical lines
+    for (let x = 0; x <= this.scene.sys.game.config.width * 10; x += gridSize) {
+      gridGraphics.lineBetween(
+        x, 0,
+        x, this.scene.sys.game.config.height * 10
+      );
+    }
+    
+    gridGraphics.setDepth(2);
   }
+  
+  /**
+   * Create the minimap
+   */
+  createMinimap() {
+    // Create a render texture for the minimap
+    this.minimapTexture = this.scene.add.renderTexture(
+      this.scene.cameras.main.width - this.minimapSize - 10, 
+      10,
+      this.minimapSize, 
+      this.minimapSize
+    );
+    
+    this.minimapTexture.setScrollFactor(0); // Fixed to camera
+    this.minimapTexture.setDepth(1000);
+    
+    // Add background
+    const bg = this.scene.add.graphics();
+    bg.fillStyle(0x000000, 0.7);
+    bg.fillRect(0, 0, this.minimapSize, this.minimapSize);
+    bg.lineStyle(1, 0xffffff, 0.8);
+    bg.strokeRect(0, 0, this.minimapSize, this.minimapSize);
+    
+    this.minimapTexture.draw(bg);
+    
+    // Create player marker (will be updated later)
+    this.playerMarker = this.scene.add.graphics();
+    this.playerMarker.fillStyle(0x00ff00, 1);
+    this.playerMarker.fillCircle(0, 0, 3);
+    this.playerMarker.setScrollFactor(0);
+    this.playerMarker.setDepth(1001);
+    this.playerMarker.setVisible(false);
+  }
+  
+  /**
+   * Process and render a new dungeon map
+   * @param {Object} mapData - Map data from server
+   */
+  renderMap(mapData) {
+    console.time('mapProcessing');
+    
+    // Clear any existing map
+    this.clearMap();
+    
+    // Store map data
+    this.mapData = mapData;
+    
+    // Register templates if provided
+    if (mapData.templates) {
+      registerTemplates(mapData.templates);
+    }
+    
+    // Process rooms and corridors
+    this.processMapData();
+    
+    // Create spatial index for fast lookups
+    this.createSpatialIndex();
+    
+    // Generate minimap
+    this.generateMinimap();
+    
+    // Set camera bounds
+    this.setCameraBounds();
+    
+    // Initial render based on camera position
+    this.updateVisibleArea();
+    
+    // Add floor level text to minimap
+    const floorText = this.scene.add.text(
+      this.minimapTexture.x + this.minimapSize / 2, 
+      this.minimapTexture.y + this.minimapSize - 15,
+      `Floor ${mapData.floorLevel || 1}`,
+      { fontSize: '12px', fill: '#ffffff' }
+    ).setScrollFactor(0).setOrigin(0.5).setDepth(1001);
+    
+    // Update debug info
+    if (this.debug && this.debugText) {
+      this.debugText.setText(`Map loaded: ${this.mapData.worldSize}x${this.mapData.worldSize}, ${this.mapData.rooms.length} rooms`);
+    }
+    
+    console.timeEnd('mapProcessing');
+  }
+  
+  /**
+   * Set camera bounds based on world size
+   */
+  setCameraBounds() {
+    if (!this.mapData) return;
+    
+    this.scene.cameras.main.setBounds(
+      0, 0, 
+      this.mapData.worldSize,
+      this.mapData.worldSize
+    );
+  }
+  
+  /**
+   * Process map data to prepare for rendering
+   */
+  processMapData() {
+    if (!this.mapData) return;
+    
+    // Process rooms
+    if (this.mapData.rooms) {
+      this.mapData.rooms.forEach(room => {
+        // Expand template references
+        if (room.t) {
+          const template = getTemplateById(room.t);
+          if (template) {
+            room.template = template;
+            room.layout = template.layout;
+            room.objects = template.objects;
+          }
+        }
+        
+        // Generate layout if not present
+        if (!room.layout) {
+          room.layout = generateBasicLayout(room.width, room.height);
+        }
+      });
+    }
+    
+    // Standardize corridor properties
+    if (this.mapData.corridors) {
+      this.mapData.corridors.forEach(corridor => {
+        // Standardize properties
+        if (!corridor.start && corridor.s) {
+          corridor.start = corridor.s;
+        }
+        
+        if (!corridor.end && corridor.e) {
+          corridor.end = corridor.e;
+        }
+        
+        if (!corridor.waypoint && corridor.w) {
+          corridor.waypoint = corridor.w;
+        }
+        
+        // Default width
+        if (!corridor.width) {
+          corridor.width = 3;
+        }
+      });
+    }
+  }
+  
+  /**
+   * Create a spatial index for efficient culling
+   */
+  createSpatialIndex() {
+    // Grid-based spatial index
+    this.spatialIndex = new Map();
+    const cellSize = 100; // Cells are 100x100 tiles
+    
+    // Index rooms
+    if (this.mapData && this.mapData.rooms) {
+      this.mapData.rooms.forEach(room => {
+        // Calculate cells this room occupies
+        const startCellX = Math.floor(room.x / cellSize);
+        const startCell

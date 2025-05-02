@@ -52,14 +52,14 @@ export class DebugManager {
   updateDebugInfo() {
     try {
       // Get player count
-      const count = Object.keys(this.scene.room.state.players || {}).length;
+      const count = this.scene.room.state.players.size;
       
       // Update debug info
       this.debug.displayObject({
         'Room ID': this.scene.room.id,
         'Your ID': this.scene.playerId,
         'Total players': count,
-        'Other players': Object.keys(this.scene.playerManager.otherPlayers).length,
+        'Other players': this.scene.playerManager.otherPlayers.length,
         'Phase': gameState.getPhase(),
         'FPS': Math.round(this.scene.game.loop.actualFps),
         'Pending inputs': networkManager.pendingInputs.length
