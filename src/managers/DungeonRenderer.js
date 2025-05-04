@@ -76,7 +76,7 @@ export class DungeonRenderer {
     this.debug = options.debug || false;
     this.tileSize = options.tileSize || 64;
 
-    console.log(
+    this.debug && console.log(
       `DungeonRenderer initialized with tileSize: ${this.tileSize}px`
     );
 
@@ -177,7 +177,7 @@ export class DungeonRenderer {
       this.playerMarker,
     ]);
 
-    console.log(
+    this.debug && console.log(
       `Minimap created at (${this.minimapX}, ${this.minimapY}) with size ${this.minimapSize}`
     );
   }
@@ -214,7 +214,34 @@ export class DungeonRenderer {
     // Redraw map elements with new position
     this.generateMinimap();
 
-    console.log(`Minimap repositioned to (${this.minimapX}, ${this.minimapY})`);
+    this.debug && console.log(`Minimap repositioned to (${this.minimapX}, ${this.minimapY})`);
+  }
+
+  logCorridorData() {
+    if (!this.mapData || !this.mapData.corridors) return;
+
+    console.log(`Total corridors: ${this.mapData.corridors.length}`);
+
+    // Count corridor types
+    let spawnCorridors = 0;
+    let internalCorridors = 0;
+
+    this.mapData.corridors.forEach((corridor) => {
+      if (corridor.isSpawnCorridor) {
+        spawnCorridors++;
+      } else {
+        internalCorridors++;
+      }
+    });
+
+    console.log(
+      `Spawn corridors: ${spawnCorridors}, Internal corridors: ${internalCorridors}`
+    );
+
+    // Log sample corridor data
+    if (this.mapData.corridors.length > 0) {
+      console.log("Sample corridor data:", this.mapData.corridors[0]);
+    }
   }
 
   /**
@@ -230,10 +257,15 @@ export class DungeonRenderer {
     // Store map data
     this.mapData = mapData;
 
+    // Log corridor data for debugging
+    if (this.debug) {
+      this.logCorridorData();
+    }
+
     // Update tile size from map data if provided
     if (mapData.tileSize) {
       this.tileSize = mapData.tileSize;
-      console.log(`Updated tile size to ${this.tileSize}px from map data`);
+      this.debug && console.log(`Updated tile size to ${this.tileSize}px from map data`);
     }
 
     // Register templates if provided
@@ -256,7 +288,7 @@ export class DungeonRenderer {
       const worldHeightPx = mapData.worldTileHeight * this.tileSize;
       this.scene.cameras.main.setBounds(0, 0, worldWidthPx, worldHeightPx);
 
-      console.log(
+      this.debug && console.log(
         `Set camera bounds to ${worldWidthPx}x${worldHeightPx}px (${mapData.worldTileWidth}x${mapData.worldTileHeight} tiles)`
       );
     }
@@ -360,7 +392,6 @@ export class DungeonRenderer {
     this.spatialIndex = new Map();
 
     // Cell size in tiles (not pixels)
-    // We're indexing in tile space, not pixel space
     const cellSize = 10; // 10x10 tiles per cell
 
     // Index rooms
@@ -387,9 +418,15 @@ export class DungeonRenderer {
       });
     }
 
-    // Index corridors
+    // Index corridors with improved bounding box calculation
     if (this.mapData && this.mapData.corridors) {
       this.mapData.corridors.forEach((corridor) => {
+        // Ensure corridor has the required properties
+        if (!corridor.start || !corridor.end) {
+          console.warn("Corridor missing required properties:", corridor);
+          return;
+        }
+
         // Calculate bounding box of corridor in tile coordinates
         let minX = Math.min(corridor.start.x, corridor.end.x);
         let minY = Math.min(corridor.start.y, corridor.end.y);
@@ -403,6 +440,13 @@ export class DungeonRenderer {
           maxX = Math.max(maxX, corridor.waypoint.x);
           maxY = Math.max(maxY, corridor.waypoint.y);
         }
+
+        // Expand bounding box by corridor width
+        const width = corridor.width || 3;
+        minX -= Math.ceil(width / 2);
+        minY -= Math.ceil(width / 2);
+        maxX += Math.ceil(width / 2);
+        maxY += Math.ceil(width / 2);
 
         // Calculate cells this corridor occupies (in tile coordinates)
         const startCellX = Math.floor(minX / cellSize);
@@ -449,7 +493,7 @@ export class DungeonRenderer {
       this.minimapSize / worldHeightPx
     );
 
-    console.log(
+    this.debug && console.log(
       `Minimap scale: ${this.minimapScale} (${this.minimapSize}px / ${worldWidthPx}px)`
     );
 
@@ -576,7 +620,7 @@ export class DungeonRenderer {
     this.playerMarker.setPosition(minimapX, minimapY);
 
     // Debug output the position of minimap and marker
-    if (this.debug && Math.random() < 0.01) {
+    /*if (this.debug && Math.random() < 0.01) {
       // Only log occasionally
       console.log(
         `Player at ${x},${y} => Minimap marker at ${minimapX},${minimapY}`
@@ -584,7 +628,7 @@ export class DungeonRenderer {
       console.log(
         `Minimap at ${this.minimapX},${this.minimapY}, scale ${this.minimapScale}`
       );
-    }
+    }*/
   }
 
   /**
@@ -732,17 +776,157 @@ export class DungeonRenderer {
    * @param {Array} corridors - Array of visible corridor objects
    */
   renderVisibleCorridors(corridors) {
-    // Process each corridor
-    corridors.forEach((corridor) => {
-      // Skip if corridor already rendered
-      if (this.visibleTiles.has(`corridor_${corridor.id}`)) return;
-
+    // Early exit if no corridors
+    if (!corridors || corridors.length === 0) return;
+    
+    // Limit the number of corridors rendered per frame
+    // Most important corridors are those closest to the center of the screen
+    const maxCorridorsPerFrame = 20;
+    
+    if (corridors.length > maxCorridorsPerFrame) {
+      // Get camera center position
+      const camera = this.scene.cameras.main;
+      const centerX = camera.scrollX + camera.width / 2;
+      const centerY = camera.scrollY + camera.height / 2;
+      
+      // Sort corridors by distance to camera center
+      corridors = corridors.map(corridor => {
+        // Get corridor center (using any available coordinate format)
+        const start = corridor.start || corridor.s || { x: 0, y: 0 };
+        const end = corridor.end || corridor.e || { x: 0, y: 0 };
+        
+        const centerPosX = (start.x + end.x) / 2 * this.tileSize;
+        const centerPosY = (start.y + end.y) / 2 * this.tileSize;
+        
+        // Calculate distance
+        const dx = centerPosX - centerX;
+        const dy = centerPosY - centerY;
+        const distSq = dx * dx + dy * dy;
+        
+        return {
+          corridor,
+          distSq
+        };
+      })
+      .sort((a, b) => a.distSq - b.distSq)
+      .slice(0, maxCorridorsPerFrame)
+      .map(item => item.corridor);
+    }
+    
+    // Now render the (possibly reduced) corridor list
+    for (let i = 0; i < corridors.length; i++) {
+      const corridor = corridors[i];
+      
+      // Generate a stable ID for this corridor
+      const corridorKey = `corridor_${corridor.id || `${i}_${corridor.start?.x}_${corridor.start?.y}`}`;
+      
+      // Skip if already rendered
+      if (this.visibleTiles.has(corridorKey)) continue;
+      
       // Mark corridor as rendered
-      this.visibleTiles.set(`corridor_${corridor.id}`, true);
-
-      // Render corridor
-      this.renderCorridor(corridor);
-    });
+      this.visibleTiles.set(corridorKey, true);
+      
+      // Render the corridor using a simplified approach
+      this.renderCorridorSimple(corridor, corridorKey);
+    }
+  }
+  
+  // Simplified corridor rendering that minimizes calculations and draw calls
+  renderCorridorSimple(corridor, corridorKey) {
+    // Handle different property naming conventions
+    const start = corridor.start || corridor.s || { x: 0, y: 0 };
+    const end = corridor.end || corridor.e || { x: 0, y: 0 };
+    const waypoint = corridor.waypoint || corridor.w;
+    
+    // Ensure required properties exist
+    if (!start || !end) return null;
+    
+    // Get corridor width in pixels
+    const width = (corridor.width || 3) * this.tileSize;
+    
+    // Get color
+    const color = corridor.isSpawnCorridor ? 0x8800ff : 0x666666;
+    
+    // Create or reuse a graphics object
+    let graphics;
+    if (this.objectPools.corridor.length > 0) {
+      graphics = this.objectPools.corridor.pop();
+      graphics.clear();
+      graphics.setVisible(true);
+    } else {
+      graphics = this.scene.add.graphics();
+      // Add to floor layer
+      this.layers.floor.add(graphics);
+    }
+    
+    // Store corridor ID for recycling
+    graphics._corridorId = corridorKey;
+    
+    // Set fill style once
+    graphics.fillStyle(color, 0.8);
+    
+    // Convert tile coordinates to pixel coordinates (efficient)
+    const s = {
+      x: start.x * this.tileSize + this.tileSize/2,
+      y: start.y * this.tileSize + this.tileSize/2
+    };
+    
+    const e = {
+      x: end.x * this.tileSize + this.tileSize/2,
+      y: end.y * this.tileSize + this.tileSize/2
+    };
+    
+    if (waypoint) {
+      const w = {
+        x: waypoint.x * this.tileSize + this.tileSize/2,
+        y: waypoint.y * this.tileSize + this.tileSize/2
+      };
+      
+      // Draw L-shaped corridor more efficiently
+      // First segment
+      this.drawCorridorSegmentEfficient(graphics, s, w, width);
+      
+      // Second segment
+      this.drawCorridorSegmentEfficient(graphics, w, e, width);
+      
+      // Junction circle (just one draw call)
+      graphics.fillCircle(w.x, w.y, width/2);
+    } else {
+      // Straight corridor
+      this.drawCorridorSegmentEfficient(graphics, s, e, width);
+    }
+    
+    // Store in visible tiles map
+    this.visibleTiles.set(corridorKey, graphics);
+    
+    return graphics;
+  }
+  
+  // Ultra-efficient corridor segment drawing
+  drawCorridorSegmentEfficient(graphics, start, end, width) {
+    // Calculate direction and length
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    
+    // Skip if too short
+    if (length < 1) return;
+    
+    // Half width
+    const halfWidth = width / 2;
+    
+    // Normalized perpendicular vector
+    const perpX = -dy / length * halfWidth;
+    const perpY = dx / length * halfWidth;
+    
+    // Draw rectangle in one operation
+    graphics.beginPath();
+    graphics.moveTo(start.x + perpX, start.y + perpY);
+    graphics.lineTo(end.x + perpX, end.y + perpY);
+    graphics.lineTo(end.x - perpX, end.y - perpY);
+    graphics.lineTo(start.x - perpX, start.y - perpY);
+    graphics.closePath();
+    graphics.fillPath();
   }
 
   /**
@@ -750,55 +934,155 @@ export class DungeonRenderer {
    * @param {Object} corridor - Corridor data
    */
   renderCorridor(corridor) {
+    // Handle different property naming conventions that might be coming from server
+    const start = corridor.start || corridor.s || { x: 0, y: 0 };
+    const end = corridor.end || corridor.e || { x: 0, y: 0 };
+    const waypoint = corridor.waypoint || corridor.w || null;
+    
     // Convert tile coordinates to pixels
-    const start = {
-      x: corridor.start.x * this.tileSize,
-      y: corridor.start.y * this.tileSize,
+    const startPixel = {
+      x: start.x * this.tileSize + this.tileSize / 2,
+      y: start.y * this.tileSize + this.tileSize / 2,
     };
-
-    const end = {
-      x: corridor.end.x * this.tileSize,
-      y: corridor.end.y * this.tileSize,
+  
+    const endPixel = {
+      x: end.x * this.tileSize + this.tileSize / 2,
+      y: end.y * this.tileSize + this.tileSize / 2,
     };
-
-    const waypoint = corridor.waypoint
+  
+    const waypointPixel = waypoint
       ? {
-          x: corridor.waypoint.x * this.tileSize,
-          y: corridor.waypoint.y * this.tileSize,
+          x: waypoint.x * this.tileSize + this.tileSize / 2,
+          y: waypoint.y * this.tileSize + this.tileSize / 2,
         }
       : null;
-
-    // Corridor color
+  
+    // Ensure corridor width is properly set (convert from tiles to pixels)
+    const corridorWidthPx = (corridor.width || 3) * this.tileSize;
+    
+    // Set color based on corridor type
     const color = corridor.isSpawnCorridor ? 0x8800ff : 0x666666;
-
-    // Create a corridor graphic
-    const corridorGraphic = this.scene.add.graphics();
-
+    const alpha = 0.9; // Higher opacity for better visibility
+  
+    // Create corridor graphic
+    let corridorGraphic;
+    
+    if (this.objectPools.corridor.length > 0) {
+      corridorGraphic = this.objectPools.corridor.pop();
+      corridorGraphic.clear();
+      corridorGraphic.setVisible(true);
+    } else {
+      corridorGraphic = this.scene.add.graphics();
+    }
+  
     // Set style
-    corridorGraphic.fillStyle(color, 0.8);
-
+    corridorGraphic.fillStyle(color, alpha);
+  
     // Draw corridor
-    if (waypoint) {
+    if (waypointPixel) {
       // Render L-shaped corridor
-      this.renderCorridorSegment(
+      this.renderCorridorSegmentImproved(
         corridorGraphic,
-        start,
-        waypoint,
-        corridor.width
+        startPixel,
+        waypointPixel,
+        corridorWidthPx
       );
-      this.renderCorridorSegment(
+      
+      this.renderCorridorSegmentImproved(
         corridorGraphic,
-        waypoint,
-        end,
-        corridor.width
+        waypointPixel,
+        endPixel,
+        corridorWidthPx
+      );
+      
+      // Add rounded corner for L-shape
+      corridorGraphic.fillCircle(
+        waypointPixel.x, 
+        waypointPixel.y, 
+        corridorWidthPx / 2
       );
     } else {
       // Render straight corridor
-      this.renderCorridorSegment(corridorGraphic, start, end, corridor.width);
+      this.renderCorridorSegmentImproved(
+        corridorGraphic,
+        startPixel,
+        endPixel,
+        corridorWidthPx
+      );
     }
-
-    // Add to layer
+  
+    // Add to floor layer
     this.layers.floor.add(corridorGraphic);
+    
+    // Store in visible tiles
+    this.visibleTiles.set(`corridor_${corridor.id || corridor.s?.x}_${corridor.s?.y}`, corridorGraphic);
+    
+    return corridorGraphic;
+  }
+
+  // Improved corridor segment rendering
+  renderCorridorSegmentImproved(graphics, start, end, widthPx) {
+    // Calculate corridor properties
+    const halfWidth = widthPx / 2;
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const length = Math.sqrt(
+      Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
+    );
+    
+    // Skip if too short
+    if (length < 1) return;
+  
+    // Calculate perpendicular offset vectors
+    const perpX = Math.sin(angle) * halfWidth;
+    const perpY = -Math.cos(angle) * halfWidth;
+  
+    // Define corners
+    const corners = [
+      { x: start.x - perpX, y: start.y - perpY },
+      { x: start.x + perpX, y: start.y + perpY },
+      { x: end.x + perpX, y: end.y + perpY },
+      { x: end.x - perpX, y: end.y - perpY }
+    ];
+  
+    // Draw corridor polygon
+    graphics.beginPath();
+    graphics.moveTo(corners[0].x, corners[0].y);
+  
+    for (let i = 1; i < corners.length; i++) {
+      graphics.lineTo(corners[i].x, corners[i].y);
+    }
+  
+    graphics.closePath();
+    graphics.fillPath();
+  }
+
+  // New method to render a rounded corner at corridor junctions
+  renderCorridorCorner(graphics, waypoint, start, end, widthPx) {
+    // Calculate half width
+    const halfWidth = widthPx / 2;
+
+    // Determine direction vectors
+    const dir1 = {
+      x: waypoint.x - start.x,
+      y: waypoint.y - start.y,
+    };
+
+    const dir2 = {
+      x: end.x - waypoint.x,
+      y: end.y - waypoint.y,
+    };
+
+    // Normalize direction vectors
+    const len1 = Math.sqrt(dir1.x * dir1.x + dir1.y * dir1.y);
+    const len2 = Math.sqrt(dir2.x * dir2.x + dir2.y * dir2.y);
+
+    dir1.x /= len1;
+    dir1.y /= len1;
+    dir2.x /= len2;
+    dir2.y /= len2;
+
+    // Draw a filled circle at the waypoint to create a rounded corner
+    graphics.fillCircle(waypoint.x, waypoint.y, halfWidth);
   }
 
   /**
@@ -1299,22 +1583,25 @@ export class DungeonRenderer {
     const pointX = tileX * this.tileSize + this.tileSize / 2;
     const pointY = tileY * this.tileSize + this.tileSize / 2;
 
-    // Convert corridor points to pixels
+    // Convert corridor points to pixels (center of tiles)
     const start = {
-      x: corridor.start.x * this.tileSize,
-      y: corridor.start.y * this.tileSize,
+      x: corridor.start.x * this.tileSize + this.tileSize / 2,
+      y: corridor.start.y * this.tileSize + this.tileSize / 2,
     };
 
     const end = {
-      x: corridor.end.x * this.tileSize,
-      y: corridor.end.y * this.tileSize,
+      x: corridor.end.x * this.tileSize + this.tileSize / 2,
+      y: corridor.end.y * this.tileSize + this.tileSize / 2,
     };
+
+    // Corridor width in pixels
+    const corridorWidthPx = (corridor.width || 3) * this.tileSize;
 
     // Check if within corridor segments
     if (corridor.waypoint) {
       const waypoint = {
-        x: corridor.waypoint.x * this.tileSize,
-        y: corridor.waypoint.y * this.tileSize,
+        x: corridor.waypoint.x * this.tileSize + this.tileSize / 2,
+        y: corridor.waypoint.y * this.tileSize + this.tileSize / 2,
       };
 
       // Check if within start-waypoint segment
@@ -1323,7 +1610,7 @@ export class DungeonRenderer {
           { x: pointX, y: pointY },
           start,
           waypoint,
-          corridor.width * this.tileSize
+          corridorWidthPx
         )
       ) {
         return true;
@@ -1335,9 +1622,19 @@ export class DungeonRenderer {
           { x: pointX, y: pointY },
           waypoint,
           end,
-          corridor.width * this.tileSize
+          corridorWidthPx
         )
       ) {
+        return true;
+      }
+
+      // Check if within corner area (for L-shaped corridors)
+      const cornerRadius = corridorWidthPx / 2;
+      const dx = pointX - waypoint.x;
+      const dy = pointY - waypoint.y;
+      const distanceToCorner = Math.sqrt(dx * dx + dy * dy);
+
+      if (distanceToCorner <= cornerRadius) {
         return true;
       }
     } else {
@@ -1347,7 +1644,7 @@ export class DungeonRenderer {
           { x: pointX, y: pointY },
           start,
           end,
-          corridor.width * this.tileSize
+          corridorWidthPx
         )
       ) {
         return true;
@@ -1365,37 +1662,46 @@ export class DungeonRenderer {
    * @param {number} thickness - Segment thickness in pixels
    * @returns {boolean} - True if point is in segment
    */
+  // Improved point-in-segment detection
   isPointInSegment(point, segStart, segEnd, thickness) {
     // Calculate segment length
     const segLength = Math.sqrt(
       Math.pow(segEnd.x - segStart.x, 2) + Math.pow(segEnd.y - segStart.y, 2)
     );
 
-    // Calculate distances
-    const d1 = Math.sqrt(
-      Math.pow(point.x - segStart.x, 2) + Math.pow(point.y - segStart.y, 2)
-    );
+    // If segment is too short, treat as a point
+    if (segLength < 1) {
+      const dist = Math.sqrt(
+        Math.pow(point.x - segStart.x, 2) + Math.pow(point.y - segStart.y, 2)
+      );
+      return dist <= thickness / 2;
+    }
 
-    const d2 = Math.sqrt(
-      Math.pow(point.x - segEnd.x, 2) + Math.pow(point.y - segEnd.y, 2)
-    );
+    // Calculate direction vector
+    const dirX = (segEnd.x - segStart.x) / segLength;
+    const dirY = (segEnd.y - segStart.y) / segLength;
 
-    // Check if point is within segment bounds
-    if (d1 + d2 > segLength + 0.5) {
+    // Calculate perpendicular vector
+    const perpX = -dirY;
+    const perpY = dirX;
+
+    // Vector from start to point
+    const vX = point.x - segStart.x;
+    const vY = point.y - segStart.y;
+
+    // Project point onto segment direction
+    const projDist = vX * dirX + vY * dirY;
+
+    // If projection falls outside segment, point is not in segment
+    if (projDist < 0 || projDist > segLength) {
       return false;
     }
 
-    // Calculate distance from point to line
-    const dist =
-      Math.abs(
-        (segEnd.y - segStart.y) * point.x -
-          (segEnd.x - segStart.x) * point.y +
-          segEnd.x * segStart.y -
-          segEnd.y * segStart.x
-      ) / segLength;
+    // Calculate perpendicular distance from point to line
+    const perpDist = Math.abs(vX * perpX + vY * perpY);
 
-    // Check if distance is within thickness
-    return dist <= thickness / 2;
+    // Check if distance is within half the thickness
+    return perpDist <= thickness / 2;
   }
 
   /**
