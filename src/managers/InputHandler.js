@@ -7,6 +7,7 @@ export class InputHandler {
     this.controls = createControls(scene);
     this.networkHandler = null;
     this.playerManager = null;
+    this.collisionSystem = null;
     
     // Input sequence tracking
     this.inputSequence = 0;
@@ -18,6 +19,10 @@ export class InputHandler {
     // Input sending rate limiting
     this.lastInputTime = 0;
     this.inputSendRate = 16.67; // ~60Hz - match server tick rate
+    
+    // Wall collision feedback
+    this.lastCollisionTime = 0;
+    this.collisionCooldown = 500; // ms between collision feedback
   }
   
   /**
@@ -35,6 +40,14 @@ export class InputHandler {
   setPlayerManager(playerManager) {
     this.playerManager = playerManager;
   }
+
+  /**
+   * Set the collision system reference
+   * @param {CollisionSystem} collisionSystem - Collision system instance
+   */
+  setCollisionSystem(collisionSystem) {
+    this.collisionSystem = collisionSystem;
+  }
   
   /**
    * Process input and apply movement
@@ -50,12 +63,60 @@ export class InputHandler {
     // Check if any movement keys are pressed
     if (!this.controls.isMoving()) return false;
     
+    // Get player's current position
+    const position = this.playerManager.getPlayerPosition();
+    
+    // Calculate movement amount
+    const moveAmount = (this.moveSpeed * delta) / 1000;
+    
+    // Calculate target position
+    let targetX = position.x;
+    let targetY = position.y;
+    
+    if (inputState.left) targetX -= moveAmount;
+    if (inputState.right) targetX += moveAmount;
+    if (inputState.up) targetY -= moveAmount;
+    if (inputState.down) targetY += moveAmount;
+    
+    // Apply collision detection if system is available
+    let newX = targetX;
+    let newY = targetY;
+    let collided = false;
+    
+    if (this.collisionSystem) {
+      // Check if target position would collide
+      if (this.collisionSystem.checkCollision(targetX, targetY)) {
+        collided = true;
+        
+        // Resolve collision with sliding
+        const resolvedPosition = this.collisionSystem.resolveCollision(
+          position.x, position.y, targetX, targetY
+        );
+        
+        newX = resolvedPosition.x;
+        newY = resolvedPosition.y;
+        
+        // Play collision feedback if enough time has passed
+        const now = Date.now();
+        if (collided && now - this.lastCollisionTime > this.collisionCooldown) {
+          this.playCollisionFeedback();
+          this.lastCollisionTime = now;
+        }
+      }
+    } else {
+      // No collision system, use target directly
+      newX = targetX;
+      newY = targetY;
+    }
+    
     // Generate input command with sequence number
     const input = {
       ...inputState,
       seq: this.inputSequence++,
       timestamp: Date.now(),
-      delta
+      delta,
+      targetX: newX,
+      targetY: newY
     };
     
     // Apply input locally (client-side prediction)
@@ -77,27 +138,13 @@ export class InputHandler {
   applyInput(input) {
     if (!this.playerManager) return;
     
-    // Calculate movement amount - EXACTLY MATCH SERVER CALCULATION
-    const moveAmount = (this.moveSpeed * input.delta) / 1000;
-    
-    // Get player's current position
-    const position = this.playerManager.getPlayerPosition();
-    const newPosition = { ...position };
-    
-    // Apply movement based on input - USE SAME APPROACH AS SERVER
-    if (input.left) newPosition.x -= moveAmount;
-    if (input.right) newPosition.x += moveAmount;
-    if (input.up) newPosition.y -= moveAmount;
-    if (input.down) newPosition.y += moveAmount;
-    
-    // Apply boundary constraints - MATCH SERVER CONSTANTS
-    newPosition.x = Math.max(0, Math.min(newPosition.x, 20000));
-    newPosition.y = Math.max(0, Math.min(newPosition.y, 20000));
-    
     // Update player position
-    this.playerManager.setPlayerPosition(newPosition.x, newPosition.y);
-
-    //console.log(input.seq, input.delta, moveAmount, newPosition.x, newPosition.y);
+    this.playerManager.setPlayerPosition(input.targetX, input.targetY);
+    
+    // Update collision debug visualization if available
+    if (this.collisionSystem && this.collisionSystem.debug) {
+      this.collisionSystem.updateDebug(input.targetX, input.targetY);
+    }
   }
   
   /**
@@ -151,5 +198,25 @@ export class InputHandler {
     for (const input of this.pendingInputs) {
       this.applyInput(input);
     }
+  }
+
+  /**
+   * Play collision feedback effects
+   */
+  playCollisionFeedback() {
+    // Visual feedback
+    if (this.playerManager && this.playerManager.localPlayer) {
+      // Flash the player briefly
+      this.scene.tweens.add({
+        targets: this.playerManager.localPlayer,
+        alpha: 0.6,
+        duration: 50,
+        yoyo: true
+      });
+    }
+    
+    // Audio feedback
+    // If you have sound effects, play them here
+    // this.scene.sound.play('bump');
   }
 }

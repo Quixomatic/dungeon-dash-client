@@ -163,9 +163,6 @@ export class DungeonRenderer {
     }
   }
 
-  /**
-   * Create the minimap
-   */
   createMinimap() {
     // Create a container for the minimap
     this.minimapContainer = this.scene.add.container(0, 0);
@@ -182,39 +179,29 @@ export class DungeonRenderer {
     this.minimapY = padding;
 
     // Create a background rectangle for the minimap
-    this.minimapBackground = this.scene.add.rectangle(
-      this.minimapX + this.minimapSize / 2,
-      this.minimapY + this.minimapSize / 2,
-      this.minimapSize,
-      this.minimapSize,
-      0x000000,
-      0.7
-    );
+    this.minimapBackground = this.scene.add
+      .rectangle(0, 0, this.minimapSize, this.minimapSize, 0x000000, 0.7)
+      .setOrigin(0);
 
     // Add border to minimap
     this.minimapBorder = this.scene.add.graphics();
     this.minimapBorder.lineStyle(2, 0xffffff, 0.8);
-    this.minimapBorder.strokeRect(
-      this.minimapX,
-      this.minimapY,
-      this.minimapSize,
-      this.minimapSize
-    );
+    this.minimapBorder.strokeRect(0, 0, this.minimapSize, this.minimapSize);
 
     // Create graphics for map elements
     this.minimapGraphics = this.scene.add.graphics();
-    this.minimapGraphics.setScrollFactor(0);
 
     // Create player marker
     this.playerMarker = this.scene.add.circle(
-      this.minimapX + this.minimapSize / 2, // Center initially
-      this.minimapY + this.minimapSize / 2, // Center initially
+      0,
+      0, // Will be positioned in update
       4, // Radius
       0x00ff00, // Green
       1 // Alpha
     );
-    this.playerMarker.setScrollFactor(0);
-    this.playerMarker.setDepth(1002);
+
+    // Position the entire container
+    this.minimapContainer.setPosition(this.minimapX, this.minimapY);
 
     // Add everything to container
     this.minimapContainer.add([
@@ -278,38 +265,46 @@ export class DungeonRenderer {
     // Calculate scale to fit dungeon in minimap
     const dungeonWidthPx = this.dungeonWidth * this.tileSize;
     const dungeonHeightPx = this.dungeonHeight * this.tileSize;
-    this.minimapScale =
-      Math.min(
-        this.minimapSize / dungeonWidthPx,
-        this.minimapSize / dungeonHeightPx
-      ) * 0.9; // 90% of available size to leave some margin
+    this.minimapScale = Math.min(
+      (this.minimapSize * 0.9) / dungeonWidthPx,
+      (this.minimapSize * 0.9) / dungeonHeightPx
+    );
 
-    // Draw tiles layer first (simplified representation)
+    // Add a smaller zoom factor for better overview
+    this.minimapScale *= 0.6;
+
+    // Center the map in the minimap
+    const offsetX = (this.minimapSize - dungeonWidthPx * this.minimapScale) / 2;
+    const offsetY =
+      (this.minimapSize - dungeonHeightPx * this.minimapScale) / 2;
+
+    // Store these offsets for position calculations
+    this.minimapOffsetX = offsetX;
+    this.minimapOffsetY = offsetY;
+
+    // Draw walls and floors
     if (this.mapData.layers && this.mapData.layers.tiles) {
-      this.minimapGraphics.fillStyle(0x333333, 0.8); // Floor color
-
-      // Draw all floors as a base
+      // First draw floor background
+      this.minimapGraphics.fillStyle(0x333333, 0.8);
       this.minimapGraphics.fillRect(
-        this.minimapX + 5,
-        this.minimapY + 5,
-        this.minimapSize - 10,
-        this.minimapSize - 10
+        offsetX,
+        offsetY,
+        dungeonWidthPx * this.minimapScale,
+        dungeonHeightPx * this.minimapScale
       );
 
-      // Draw walls
-      this.minimapGraphics.fillStyle(0x666666, 0.8); // Wall color
+      // Then draw walls
+      this.minimapGraphics.fillStyle(0x666666, 0.8);
 
-      // Process the tiles array
       for (let y = 0; y < this.mapData.layers.tiles.length; y++) {
         for (let x = 0; x < this.mapData.layers.tiles[y].length; x++) {
           const tile = this.mapData.layers.tiles[y][x];
 
-          // Only draw walls, floor is already drawn as background
-          if (tile === 1 || tile > 1) {
-            // Wall or special tile
-            const miniX = this.minimapX + x * this.minimapScale * this.tileSize;
-            const miniY = this.minimapY + y * this.minimapScale * this.tileSize;
-            const miniSize = this.minimapScale * this.tileSize;
+          // Only draw walls
+          if (tile > 0) {
+            const miniX = offsetX + x * this.minimapScale * this.tileSize;
+            const miniY = offsetY + y * this.minimapScale * this.tileSize;
+            const miniSize = Math.max(1, this.minimapScale * this.tileSize);
 
             this.minimapGraphics.fillRect(miniX, miniY, miniSize, miniSize);
           }
@@ -319,15 +314,13 @@ export class DungeonRenderer {
 
     // Draw spawn points
     if (this.mapData.spawnPoints) {
-      this.minimapGraphics.fillStyle(0x8800ff, 1); // Purple for spawn points
+      this.minimapGraphics.fillStyle(0x8800ff, 1);
 
       this.mapData.spawnPoints.forEach((spawn) => {
-        const miniX =
-          this.minimapX + spawn.x * this.minimapScale * this.tileSize;
-        const miniY =
-          this.minimapY + spawn.y * this.minimapScale * this.tileSize;
+        const miniX = offsetX + spawn.x * this.minimapScale * this.tileSize;
+        const miniY = offsetY + spawn.y * this.minimapScale * this.tileSize;
 
-        this.minimapGraphics.fillCircle(miniX, miniY, 4);
+        this.minimapGraphics.fillCircle(miniX, miniY, 3);
       });
     }
 
@@ -338,14 +331,12 @@ export class DungeonRenderer {
 
     this.floorText = this.scene.add
       .text(
-        this.minimapX + this.minimapSize / 2,
-        this.minimapY + this.minimapSize - 15,
+        this.minimapSize / 2,
+        this.minimapSize - 15,
         `Floor ${this.mapData.floorLevel || 1}`,
         { fontSize: "12px", fill: "#ffffff" }
       )
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(1001);
+      .setOrigin(0.5);
 
     this.minimapContainer.add(this.floorText);
   }
@@ -1319,9 +1310,9 @@ export class DungeonRenderer {
   update(x, y) {
     // Update minimap player marker
     if (this.playerMarker && this.minimapScale) {
-      const minimapX = this.minimapX + x * this.minimapScale;
-      const minimapY = this.minimapY + y * this.minimapScale;
-
+      const minimapX = this.minimapOffsetX + x * this.minimapScale;
+      const minimapY = this.minimapOffsetY + y * this.minimapScale;
+      
       this.playerMarker.setPosition(minimapX, minimapY);
     }
 
