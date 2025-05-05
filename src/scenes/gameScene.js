@@ -1,4 +1,4 @@
-// src/scenes/GameScene.js
+// src/scenes/GameScene.js - Updated for new dungeon renderer
 import Phaser from "phaser";
 import { PlayerManager } from "../managers/PlayerManager.js";
 import { InputHandler } from "../managers/InputHandler.js";
@@ -29,6 +29,12 @@ export class GameScene extends Phaser.Scene {
     this.currentFloor = 1;
     this.collapseWarning = false;
     this.collapseTime = 0;
+    
+    // Performance tracking
+    this.perfMetrics = {
+      fps: [],
+      objects: { sprites: 0, text: 0 }
+    };
   }
 
   preload() {
@@ -41,40 +47,126 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    // Generate tile textures
-    if (!this.textures.exists("tiles")) {
-      this.createTileTextures();
-    }
+    // Pre-generate tile textures
+    this.generateTileTextures();
   }
 
   /**
-   * Create tile textures for dungeon
+   * Generate textures for various tile and prop types
    */
-  createTileTextures() {
-    const canvasTexture = this.textures.createCanvas("tiles", 128, 128);
-    const ctx = canvasTexture.getContext();
-
-    // Floor tiles
-    ctx.fillStyle = "#555555";
-    ctx.fillRect(0, 0, 32, 32);
-    ctx.strokeStyle = "#444444";
-    ctx.strokeRect(0, 0, 32, 32);
-
-    // Wall tiles
-    ctx.fillStyle = "#777777";
-    ctx.fillRect(32, 0, 32, 32);
-    ctx.strokeStyle = "#666666";
-    ctx.strokeRect(32, 0, 32, 32);
-
-    // Special tiles
-    ctx.fillStyle = "#888800";
-    ctx.fillRect(64, 0, 32, 32); // Treasure
-    ctx.fillStyle = "#880000";
-    ctx.fillRect(96, 0, 32, 32); // Monster
-
-    // More tile types...
-
-    canvasTexture.refresh();
+  generateTileTextures() {
+    // Floor texture
+    if (!this.textures.exists("floor")) {
+      const floor = this.textures.createCanvas("floor", 64, 64);
+      const ctx = floor.getContext();
+      ctx.fillStyle = "#333333";
+      ctx.fillRect(0, 0, 64, 64);
+      ctx.strokeStyle = "#222222";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, 0, 64, 64);
+      
+      // Add some noise/texture
+      ctx.fillStyle = "#2a2a2a";
+      for (let i = 0; i < 20; i++) {
+        const x = Math.random() * 64;
+        const y = Math.random() * 64;
+        const size = 1 + Math.random() * 3;
+        ctx.fillRect(x, y, size, size);
+      }
+      
+      floor.refresh();
+    }
+    
+    // Wall texture
+    if (!this.textures.exists("wall")) {
+      const wall = this.textures.createCanvas("wall", 64, 64);
+      const ctx = wall.getContext();
+      ctx.fillStyle = "#666666";
+      ctx.fillRect(0, 0, 64, 64);
+      
+      // Add some texture to walls
+      ctx.fillStyle = "#555555";
+      ctx.fillRect(4, 4, 56, 56);
+      ctx.strokeStyle = "#777777";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(2, 2, 60, 60);
+      
+      wall.refresh();
+    }
+    
+    // Torch texture
+    if (!this.textures.exists("torch")) {
+      const torch = this.textures.createCanvas("torch", 32, 32);
+      const ctx = torch.getContext();
+      
+      // Torch base
+      ctx.fillStyle = "#553300";
+      ctx.fillRect(12, 16, 8, 16);
+      
+      // Flame
+      ctx.fillStyle = "#ff9900";
+      ctx.beginPath();
+      ctx.moveTo(12, 16);
+      ctx.quadraticCurveTo(16, 0, 20, 16);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Highlight
+      ctx.fillStyle = "#ffcc00";
+      ctx.beginPath();
+      ctx.moveTo(14, 16);
+      ctx.quadraticCurveTo(16, 4, 18, 16);
+      ctx.closePath();
+      ctx.fill();
+      
+      torch.refresh();
+    }
+    
+    // Spawn point texture
+    if (!this.textures.exists("spawn")) {
+      const spawn = this.textures.createCanvas("spawn", 64, 64);
+      const ctx = spawn.getContext();
+      
+      // Circle with glow
+      const gradient = ctx.createRadialGradient(32, 32, 5, 32, 32, 32);
+      gradient.addColorStop(0, "#8800ff");
+      gradient.addColorStop(0.5, "rgba(136, 0, 255, 0.5)");
+      gradient.addColorStop(1, "rgba(136, 0, 255, 0)");
+      
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 64, 64);
+      
+      // Center marker
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(32, 32, 5, 0, Math.PI * 2);
+      ctx.fill();
+      
+      spawn.refresh();
+    }
+    
+    // Chest texture
+    if (!this.textures.exists("chest")) {
+      const chest = this.textures.createCanvas("chest", 48, 32);
+      const ctx = chest.getContext();
+      
+      // Chest base
+      ctx.fillStyle = "#8B4513";
+      ctx.fillRect(4, 8, 40, 24);
+      
+      // Chest top
+      ctx.fillStyle = "#A0522D";
+      ctx.fillRect(8, 4, 32, 8);
+      
+      // Metal details
+      ctx.fillStyle = "#FFD700";
+      ctx.fillRect(20, 14, 8, 6);
+      ctx.strokeStyle = "#FFD700";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(6, 10, 36, 20);
+      
+      chest.refresh();
+    }
   }
 
   create() {
@@ -96,31 +188,13 @@ export class GameScene extends Phaser.Scene {
     this.playerId = this.room.sessionId;
     this.playerName = this.registry.get("playerName") || "Player";
   
-    // Create a background that extends beyond the viewport
-    this.createBackground();
-  
-    // Initialize managers
+    // Initialize managers in the correct order
     this.initializeManagers();
   
     // Get map data from gameState
     const mapData = gameState.getMapData();
     if (mapData) {
       console.log("Using map data from gameState");
-  
-      // Get tile size from map data
-      const tileSize = mapData.tileSize || 64;
-  
-      // Calculate world bounds in pixels
-      const worldWidth = mapData.worldTileWidth * tileSize;
-      const worldHeight = mapData.worldTileHeight * tileSize;
-  
-      // Update world bounds
-      this.physics.world.setBounds(0, 0, worldWidth, worldHeight);
-      this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
-  
-      console.log(
-        `Set world bounds to ${worldWidth}x${worldHeight} pixels (${mapData.worldTileWidth}x${mapData.worldTileHeight} tiles)`
-      );
   
       // Render the map with the received data
       if (this.dungeonRenderer) {
@@ -129,17 +203,22 @@ export class GameScene extends Phaser.Scene {
         console.error("DungeonRenderer not initialized!");
       }
     } else {
-      console.warn("No map data in gameState! Game may not function properly.");
+      console.warn("No map data in gameState! Requesting from server...");
       
-      // Show error message to player
-      this.add.text(400, 300, "Error: Map data not loaded!", {
-        fontSize: "24px",
-        fill: "#ff0000",
-        backgroundColor: "#222222",
-        padding: { x: 20, y: 10 }
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(1000);
+      // Request map data from server
+      if (this.room) {
+        this.room.send("requestMapData");
+        
+        // Show loading message
+        this.loadingText = this.add.text(400, 300, "Loading map data...", {
+          fontSize: "24px",
+          fill: "#ffffff",
+          backgroundColor: "#222222",
+          padding: { x: 20, y: 10 }
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(1000);
+      }
       
-      // Set default world bounds
+      // Set default world bounds until we get map data
       this.physics.world.setBounds(0, 0, 20000, 20000);
       this.cameras.main.setBounds(0, 0, 20000, 20000);
     }
@@ -147,26 +226,103 @@ export class GameScene extends Phaser.Scene {
     // Configure camera to follow player
     this.cameras.main.startFollow(this.playerManager.localPlayer, true, 0.08, 0.08);
   
+    // Set up event listeners
+    this.setupEventHandlers();
+  
     // Add resize handler to update when the window changes size
     this.scale.on("resize", this.handleResize, this);
   
+    // Set up performance monitoring
     this.setupPerformanceMonitoring();
+  }
 
+  setupEventHandlers() {
+    // Map data handler
+    this.room.onMessage("mapData", (data) => {
+      console.log("Received map data from server");
+      
+      // Store in gameState
+      gameState.setMapData(data);
+      
+      // Render the map
+      if (this.dungeonRenderer) {
+        this.dungeonRenderer.renderMap(data);
+      }
+      
+      // Remove loading text if it exists
+      if (this.loadingText) {
+        this.loadingText.destroy();
+        this.loadingText = null;
+      }
+      
+      // Notify server that we've loaded the map
+      this.room.send("mapLoaded");
+      
+      // Show loaded notification 
+      this.uiManager.showNotification("Map loaded successfully!");
+    });
+    
+    // Teleportation handler
+    this.room.onMessage("teleported", (data) => {
+      console.log("Player teleported", data);
+      
+      // Update player position
+      if (this.playerManager && data.x !== undefined && data.y !== undefined) {
+        this.playerManager.setPlayerPosition(data.x, data.y);
+      }
+      
+      // Update floor level if provided
+      if (data.floorLevel !== undefined) {
+        this.currentFloor = data.floorLevel;
+        
+        // Show floor notification
+        this.uiManager.showAnnouncement(`Floor ${data.floorLevel}`);
+      }
+    });
+    
+    // Phase change handler
+    this.room.onMessage("phaseChange", (data) => {
+      console.log("Phase changed:", data);
+      
+      // Update game state
+      gameState.setPhase(data.phase);
+      
+      // Show phase notification
+      this.uiManager.showNotification(`Phase: ${data.phase.toUpperCase()}`);
+      
+      // Handle specific phases
+      if (data.phase === "gauntlet") {
+        this.uiManager.showAnnouncement("GAUNTLET PHASE", 0xff0000);
+      }
+    });
+    
+    // Floor collapse warning
+    this.room.onMessage("floorCollapsing", (data) => {
+      console.log("Floor collapsing in:", data.timeLeft);
+      
+      this.collapseWarning = true;
+      this.collapseTime = data.timeLeft;
+      
+      // Show warning
+      this.uiManager.showWarning(`FLOOR COLLAPSING IN ${data.timeLeft}!`, 0xff0000);
+    });
+    
+    // Global event handler
+    this.room.onMessage("globalEvent", (data) => {
+      console.log("Global event:", data);
+      
+      this.uiManager.showGlobalEventNotification(data.message);
+    });
+    
+    // Debug key for toggling debug mode
     this.debugKey = this.input.keyboard.addKey('G');
     this.debugKey.on('down', () => {
       if (this.dungeonRenderer) {
-        // Toggle debug mode
         this.dungeonRenderer.debug = !this.dungeonRenderer.debug;
         console.log(`Dungeon renderer debug mode: ${this.dungeonRenderer.debug}`);
         
-        if (this.dungeonRenderer.debug) {
-          // Update debug info and draw debug visualizations
-          this.dungeonRenderer.drawAllCorridorsDebug();
-        } else {
-          // Clean up debug graphics
-          if (this.dungeonRenderer.corridorDebugGraphics) {
-            this.dungeonRenderer.corridorDebugGraphics.clear();
-          }
+        if (this.debugManager) {
+          this.debugManager.debug = this.dungeonRenderer.debug;
         }
       }
     });
@@ -197,75 +353,6 @@ export class GameScene extends Phaser.Scene {
       callbackScope: this,
       loop: true,
     });
-  }
-
-  updatePerformanceMetrics() {
-    // Record FPS
-    const fps = this.game.loop.actualFps.toFixed(1);
-    this.perfMetrics.fps.push(fps);
-
-    // Count game objects
-    const sprites = this.children.list.filter(
-      (obj) => obj.type === "Sprite"
-    ).length;
-    const texts = this.children.list.filter(
-      (obj) => obj.type === "Text"
-    ).length;
-
-    this.perfMetrics.objects.sprites = sprites;
-    this.perfMetrics.objects.text = texts;
-
-    // Display current metrics
-    this.fpsText.setText(`FPS: ${fps} | Sprites: ${sprites} | Texts: ${texts}`);
-
-    // Keep only the last 60 measurements
-    if (this.perfMetrics.fps.length > 60) {
-      this.perfMetrics.fps.shift();
-    }
-
-    // Log to console if significant drops
-    if (fps < 30) {
-      console.warn(`Low FPS detected: ${fps}`);
-      console.log(`Game objects: ${this.children.list.length}`);
-    }
-  }
-
-  // Add to GameScene.js
-  createBackground() {
-    // Create a simple grid background
-    const gridSize = 64;
-    const worldSize = 20000;
-
-    // Create a graphics object for the grid
-    const gridGraphics = this.add.graphics();
-    gridGraphics.lineStyle(1, 0x333333, 0.8);
-
-    // Draw horizontal lines
-    for (let y = 0; y < worldSize; y += gridSize) {
-      gridGraphics.moveTo(0, y);
-      gridGraphics.lineTo(worldSize, y);
-    }
-
-    // Draw vertical lines
-    for (let x = 0; x < worldSize; x += gridSize) {
-      gridGraphics.moveTo(x, 0);
-      gridGraphics.lineTo(x, worldSize);
-    }
-
-    gridGraphics.strokePath();
-    gridGraphics.setDepth(-10);
-
-    // Add some reference markers every 512 pixels
-    for (let x = 0; x < worldSize; x += 512) {
-      for (let y = 0; y < worldSize; y += 512) {
-        this.add
-          .text(x + 4, y + 4, `${x},${y}`, {
-            fontSize: "12px",
-            fill: "#666666",
-          })
-          .setDepth(-5);
-      }
-    }
   }
 
   initializeManagers() {
@@ -311,44 +398,6 @@ export class GameScene extends Phaser.Scene {
     console.log("All managers initialized");
   }
 
-  // src/scenes/GameScene.js - add this to your setupDungeonEvents method
-  setupDungeonEvents() {
-    // Handle map data from server
-    this.room.onMessage("mapData", (data) => {
-      console.log("Received map data:", data);
-
-      // Get tile size from map data
-      const tileSize = data.tileSize || 64;
-
-      // Calculate world bounds in pixels
-      const worldWidth = data.worldTileWidth * tileSize;
-      const worldHeight = data.worldTileHeight * tileSize;
-
-      // Update world bounds
-      this.physics.world.setBounds(0, 0, worldWidth, worldHeight);
-      this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
-
-      console.log(
-        `Updated world bounds to ${worldWidth}x${worldHeight} pixels (${data.worldTileWidth}x${data.worldTileHeight} tiles)`
-      );
-
-      // Render the map with the received data
-      if (this.dungeonRenderer) {
-        this.dungeonRenderer.renderMap(data);
-      } else {
-        console.error("DungeonRenderer not initialized!");
-      }
-    });
-
-    // For testing - manually generate map if we don't receive it within 5 seconds
-    /*this.time.delayedCall(5000, () => {
-      if (!this.dungeonRenderer.mapData) {
-        console.log("No map data received, generating test map...");
-        this.generateTestMap();
-      }
-    });*/
-  }
-
   handleResize(gameSize) {
     const width = gameSize.width;
     const height = gameSize.height;
@@ -362,59 +411,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Update minimap position
-    if (this.dungeonRenderer && this.dungeonRenderer.minimapGraphics) {
-      this.dungeonRenderer.minimapGraphics.x = width - 210;
-      this.dungeonRenderer.minimapGraphics.y = 10;
+    if (this.dungeonRenderer) {
+      // DungeonRenderer has its own resize handler
+      this.dungeonRenderer.handleResize && this.dungeonRenderer.handleResize(width, height);
     }
-  }
-
-  // Add this test function
-  generateTestMap() {
-    const testMapData = {
-      width: 30,
-      height: 30,
-      floorLevel: 1,
-      // Test rooms
-      rooms: [
-        { id: 1, x: 5, y: 5, width: 8, height: 6, type: "spawn" },
-        { id: 2, x: 15, y: 5, width: 7, height: 8, type: "normal" },
-        { id: 3, x: 5, y: 15, width: 6, height: 6, type: "treasure" },
-        { id: 4, x: 15, y: 18, width: 8, height: 7, type: "monster" },
-      ],
-      // Test corridors
-      corridors: [
-        {
-          start: { x: 13, y: 8 },
-          end: { x: 15, y: 8 },
-          waypoint: { x: 14, y: 8 },
-        },
-        {
-          start: { x: 8, y: 11 },
-          end: { x: 8, y: 15 },
-          waypoint: { x: 8, y: 13 },
-        },
-        {
-          start: { x: 18, y: 13 },
-          end: { x: 18, y: 18 },
-          waypoint: { x: 18, y: 15 },
-        },
-      ],
-      // Test spawn points
-      spawnPoints: [{ roomId: 1, x: 9, y: 8 }],
-    };
-
-    // Render test map
-    this.dungeonRenderer.renderMap(testMapData);
-  }
-
-  setWorldBounds(width, height) {
-    // Set physics world bounds
-    this.physics.world.setBounds(0, 0, width, height);
-
-    // Set camera bounds
-    this.cameras.main.setBounds(0, 0, width, height);
-
-    console.log(`World bounds set to ${width}x${height}`);
   }
 
   update(time, delta) {
@@ -452,10 +452,18 @@ export class GameScene extends Phaser.Scene {
   shutdown() {
     // Remove event listeners
     this.scale.off("resize", this.handleResize);
+    
+    if (this.debugKey) {
+      this.debugKey.off('down');
+    }
 
     // Destroy managers that need manual cleanup
     if (this.debugManager) {
       this.debugManager.destroy();
+    }
+    
+    if (this.dungeonRenderer) {
+      this.dungeonRenderer.destroy();
     }
 
     // Clear any running timers
@@ -464,9 +472,10 @@ export class GameScene extends Phaser.Scene {
     // Clear any running tweens
     this.tweens.killAll();
 
-    // Stop listening to room events
+    // Clear message listeners from room
     if (this.room) {
-      // Clear message listeners (may need custom implementation depending on Colyseus)
+      // In Colyseus, the room handles removing listeners when disconnected
+      // So no explicit cleanup needed here
     }
 
     console.log("GameScene properly cleaned up");

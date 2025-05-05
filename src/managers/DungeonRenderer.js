@@ -1,119 +1,113 @@
-// src/managers/DungeonRenderer.js
-import {
-  getTemplateById,
-  registerTemplates,
-  getTileColor,
-  TILE_TYPES,
-  generateBasicLayout,
-} from "../data/DungeonTemplates.js";
+// src/managers/DungeonRenderer.js - New implementation
+import Phaser from 'phaser';
 
 /**
- * DungeonRenderer - Efficiently renders the dungeon with culling
+ * DungeonRenderer - Efficiently renders tile-based dungeons
  */
 export class DungeonRenderer {
   constructor(scene) {
     this.scene = scene;
     this.tileSize = 64; // Default tile size
 
-    // Layer organization
+    // Layer management
     this.layers = {
-      background: null,
-      floor: null,
-      walls: null,
-      objects: null,
-      overlay: null,
+      tiles: this.scene.add.group(),
+      props: this.scene.add.group(),
+      monsters: this.scene.add.group(),
+      overlay: this.scene.add.group()
     };
 
+    // Set depth levels for layers
+    this.layers.tiles.setDepth(10);
+    this.layers.props.setDepth(20);
+    this.layers.monsters.setDepth(30);
+    this.layers.overlay.setDepth(100);
+
     // Minimap
-    this.minimapTexture = null;
+    this.minimapContainer = null;
+    this.minimapGraphics = null;
     this.playerMarker = null;
     this.minimapSize = 200; // Size of minimap in pixels
     this.minimapScale = 0.01; // Scale factor for minimap
 
-    // Map data
+    // Map data storage
     this.mapData = null;
+    this.dungeonWidth = 0;
+    this.dungeonHeight = 0;
 
-    // Culling system
-    this.visibleTiles = new Map(); // Map of tile IDs to sprites
+    // Tile definitions - maps tile values to visual representation
+    this.tileDefinitions = {
+      0: { type: 'floor', color: 0x333333 },  // Floor
+      1: { type: 'wall', color: 0x666666 }    // Wall
+      // Add more as needed, or load from a configuration
+    };
+
+    // Prop definitions - maps prop values to visual representation
+    this.propDefinitions = {
+      3: { type: 'chest', color: 0xAA8800 },
+      12: { type: 'torch', color: 0xFF9900, light: true }
+      // Add more as needed
+    };
+
+    // Visible tiles tracking
+    this.visibleTiles = new Map();
+    this.lastCameraPosition = { x: 0, y: 0 };
+
+    // Object pools for reuse
     this.objectPools = {
       floor: [],
       wall: [],
-      object: [],
-      corridor: [],
-      overlay: [],
+      prop: [],
+      monster: []
     };
-
-    // Visible region tracking
-    this.visibleRegion = {
-      startX: 0,
-      startY: 0,
-      endX: 0,
-      endY: 0,
-    };
-
-    // Culling buffer (in tiles)
-    this.cullingBuffer = 3;
-
-    // Spatial index for fast lookups
-    this.spatialIndex = new Map();
 
     // Debug
     this.debug = false;
     this.debugText = null;
-    this.renderStats = {
-      visibleTiles: 0,
-      hiddenTiles: 0,
-      poolSize: 0,
-      renderTime: 0,
-    };
+    this.debugGraphics = null;
   }
 
   /**
    * Initialize the renderer
-   * @param {Object} options - Configuration options
+   * @param {Object} options - Initialization options
    */
   init(options = {}) {
     this.debug = options.debug || false;
-    this.tileSize = options.tileSize || 64;
-
-    this.debug && console.log(
-      `DungeonRenderer initialized with tileSize: ${this.tileSize}px`
-    );
-
-    // Create layer groups to organize sprites
-    this.layers.background = this.scene.add.group();
-    this.layers.floor = this.scene.add.group();
-    this.layers.walls = this.scene.add.group();
-    this.layers.objects = this.scene.add.group();
-    this.layers.overlay = this.scene.add.group();
-
-    // Set depths to ensure correct rendering order
-    this.layers.background.setDepth(5);
-    this.layers.floor.setDepth(10);
-    this.layers.walls.setDepth(20);
-    this.layers.objects.setDepth(30);
-    this.layers.overlay.setDepth(100);
-
+    
     // Create minimap
     this.createMinimap();
-
-    // Register resize handler
-    this.scene.scale.on("resize", this.handleResize, this);
-
-    // Debug text
+    
+    // Create debug text if needed
     if (this.debug) {
-      this.debugText = this.scene.add
-        .text(10, 10, "Waiting for map data...", {
-          fontSize: "14px",
-          fill: "#ffffff",
-          backgroundColor: "#00000080",
-          padding: { x: 5, y: 5 },
-        })
-        .setScrollFactor(0)
-        .setDepth(1000);
+      this.debugText = this.scene.add.text(10, 10, 'DungeonRenderer', {
+        fontSize: '16px',
+        fill: '#ffffff',
+        backgroundColor: '#000000'
+      }).setScrollFactor(0).setDepth(1000);
+      
+      this.debugGraphics = this.scene.add.graphics().setDepth(1000);
     }
-
+    
+    // Listen for camera movement to update culling
+    this.scene.cameras.main.on('camerascroll', this.onCameraMove, this);
+    
     return this;
+  }
+
+  /**
+   * Handle camera movement for efficient culling
+   */
+  onCameraMove(camera) {
+    // Only update if camera moved significantly
+    const cameraDeltaX = Math.abs(camera.scrollX - this.lastCameraPosition.x);
+    const cameraDeltaY = Math.abs(camera.scrollY - this.lastCameraPosition.y);
+    
+    // If camera moved at least 1/4 of the view, update visible tiles
+    if (cameraDeltaX > camera.width / 4 || cameraDeltaY > camera.height / 4) {
+      this.lastCameraPosition.x = camera.scrollX;
+      this.lastCameraPosition.y = camera.scrollY;
+      this.updateVisibleTiles();
+    }
   }
 
   /**
@@ -154,9 +148,9 @@ export class DungeonRenderer {
       this.minimapSize
     );
 
-    // Create a container for map elements
-    this.minimapElements = this.scene.add.graphics();
-    this.minimapElements.setScrollFactor(0);
+    // Create graphics for map elements
+    this.minimapGraphics = this.scene.add.graphics();
+    this.minimapGraphics.setScrollFactor(0);
 
     // Create player marker
     this.playerMarker = this.scene.add.circle(
@@ -173,1593 +167,669 @@ export class DungeonRenderer {
     this.minimapContainer.add([
       this.minimapBackground,
       this.minimapBorder,
-      this.minimapElements,
+      this.minimapGraphics,
       this.playerMarker,
     ]);
-
-    this.debug && console.log(
-      `Minimap created at (${this.minimapX}, ${this.minimapY}) with size ${this.minimapSize}`
-    );
   }
 
   /**
-   * Handle resize event to reposition minimap
-   * @param {width} width - New screen width
-   * @param {height} height - New screen height
-   */
-  handleResize(width, height) {
-    if (!this.minimapContainer) return;
-
-    // Calculate new position
-    const padding = 20;
-    this.minimapX = width - this.minimapSize - padding;
-    this.minimapY = padding;
-
-    // Update minimap position
-    this.minimapBackground.setPosition(
-      this.minimapX + this.minimapSize / 2,
-      this.minimapY + this.minimapSize / 2
-    );
-
-    // Update border
-    this.minimapBorder.clear();
-    this.minimapBorder.lineStyle(2, 0xffffff, 0.8);
-    this.minimapBorder.strokeRect(
-      this.minimapX,
-      this.minimapY,
-      this.minimapSize,
-      this.minimapSize
-    );
-
-    // Redraw map elements with new position
-    this.generateMinimap();
-
-    this.debug && console.log(`Minimap repositioned to (${this.minimapX}, ${this.minimapY})`);
-  }
-
-  logCorridorData() {
-    if (!this.mapData || !this.mapData.corridors) return;
-
-    console.log(`Total corridors: ${this.mapData.corridors.length}`);
-
-    // Count corridor types
-    let spawnCorridors = 0;
-    let internalCorridors = 0;
-
-    this.mapData.corridors.forEach((corridor) => {
-      if (corridor.isSpawnCorridor) {
-        spawnCorridors++;
-      } else {
-        internalCorridors++;
-      }
-    });
-
-    console.log(
-      `Spawn corridors: ${spawnCorridors}, Internal corridors: ${internalCorridors}`
-    );
-
-    // Log sample corridor data
-    if (this.mapData.corridors.length > 0) {
-      console.log("Sample corridor data:", this.mapData.corridors[0]);
-    }
-  }
-
-  /**
-   * Process and render a new dungeon map
+   * Render a dungeon map
    * @param {Object} mapData - Map data from server
    */
   renderMap(mapData) {
-    console.time("mapProcessing");
-
+    console.time('dungeonRender');
+    
     // Clear any existing map
     this.clearMap();
-
+    
     // Store map data
     this.mapData = mapData;
-
-    // Log corridor data for debugging
-    if (this.debug) {
-      this.logCorridorData();
-    }
-
-    // Update tile size from map data if provided
-    if (mapData.tileSize) {
-      this.tileSize = mapData.tileSize;
-      this.debug && console.log(`Updated tile size to ${this.tileSize}px from map data`);
-    }
-
-    // Register templates if provided
-    if (mapData.templates) {
-      registerTemplates(mapData.templates);
-    }
-
-    // Process rooms and corridors
-    this.processMapData();
-
-    // Create spatial index for fast lookups
-    this.createSpatialIndex();
-
-    // Generate minimap
-    this.generateMinimap();
-
-    // Set camera bounds - convert tile dimensions to pixels
-    if (mapData.worldTileWidth && mapData.worldTileHeight) {
-      const worldWidthPx = mapData.worldTileWidth * this.tileSize;
-      const worldHeightPx = mapData.worldTileHeight * this.tileSize;
-      this.scene.cameras.main.setBounds(0, 0, worldWidthPx, worldHeightPx);
-
-      this.debug && console.log(
-        `Set camera bounds to ${worldWidthPx}x${worldHeightPx}px (${mapData.worldTileWidth}x${mapData.worldTileHeight} tiles)`
-      );
-    }
-
-    // Initial render based on camera position
-    this.updateVisibleArea();
-
-    // Add floor level text to minimap
-    if (this.floorText) {
-      this.floorText.destroy();
-    }
-
-    this.floorText = this.scene.add
-      .text(
-        this.minimapX + this.minimapSize / 2,
-        this.minimapY + this.minimapSize - 15,
-        `Floor ${mapData.floorLevel || 1}`,
-        { fontSize: "12px", fill: "#ffffff" }
-      )
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(1001);
-
-    // Update debug info
-    if (this.debug && this.debugText) {
-      const dungeonWidthPx = (mapData.dungeonTileWidth || 100) * this.tileSize;
-      const dungeonHeightPx =
-        (mapData.dungeonTileHeight || 100) * this.tileSize;
-
-      this.debugText.setText(
-        `Map: ${mapData.worldTileWidth || 0}x${
-          mapData.worldTileHeight || 0
-        } tiles (${this.tileSize}px each)\n` +
-          `Dungeon: ${mapData.dungeonTileWidth || 0}x${
-            mapData.dungeonTileHeight || 0
-          } tiles (${dungeonWidthPx}x${dungeonHeightPx}px)\n` +
-          `Rooms: ${mapData.rooms?.length || 0}, Corridors: ${
-            mapData.corridors?.length || 0
-          }`
-      );
-    }
-
-    console.timeEnd("mapProcessing");
+    
+    // Get tile size from map data or use default
+    this.tileSize = mapData.tileSize || this.tileSize;
+    
+    // Store dungeon dimensions
+    this.dungeonWidth = mapData.dungeonTileWidth;
+    this.dungeonHeight = mapData.dungeonTileHeight;
+    
+    // Set world bounds (if not already set)
+    const worldWidth = mapData.worldTileWidth * this.tileSize;
+    const worldHeight = mapData.worldTileHeight * this.tileSize;
+    this.scene.physics.world.setBounds(0, 0, worldWidth, worldHeight);
+    this.scene.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
+    
+    // Draw the minimap first
+    this.drawMinimap();
+    
+    // Initial render of visible tiles
+    this.lastCameraPosition = {
+      x: this.scene.cameras.main.scrollX,
+      y: this.scene.cameras.main.scrollY
+    };
+    this.updateVisibleTiles();
+    
+    console.timeEnd('dungeonRender');
+    
+    return this;
   }
 
   /**
-   * Process map data to prepare for rendering
+   * Draw the minimap representation of the dungeon
    */
-  processMapData() {
-    if (!this.mapData) return;
-
-    // Process rooms
-    if (this.mapData.rooms) {
-      this.mapData.rooms.forEach((room) => {
-        // Expand template references
-        if (room.t) {
-          const template = getTemplateById(room.t);
-          if (template) {
-            room.template = template;
-            room.layout = template.layout;
-            room.objects = template.objects;
-          }
-        }
-
-        // Generate layout if not present
-        if (!room.layout) {
-          room.layout = generateBasicLayout(room.width, room.height);
-        }
-      });
-    }
-
-    // Standardize corridor properties
-    if (this.mapData.corridors) {
-      this.mapData.corridors.forEach((corridor) => {
-        // Standardize properties
-        if (!corridor.start && corridor.s) {
-          corridor.start = corridor.s;
-        }
-
-        if (!corridor.end && corridor.e) {
-          corridor.end = corridor.e;
-        }
-
-        if (!corridor.waypoint && corridor.w) {
-          corridor.waypoint = corridor.w;
-        }
-
-        // Default width
-        if (!corridor.width) {
-          corridor.width = 3;
-        }
-      });
-    }
-  }
-
-  /**
-   * Create a spatial index for efficient culling
-   */
-  createSpatialIndex() {
-    // Grid-based spatial index
-    this.spatialIndex = new Map();
-
-    // Cell size in tiles (not pixels)
-    const cellSize = 10; // 10x10 tiles per cell
-
-    // Index rooms
-    if (this.mapData && this.mapData.rooms) {
-      this.mapData.rooms.forEach((room) => {
-        // Calculate cells this room occupies (in tile coordinates)
-        const startCellX = Math.floor(room.x / cellSize);
-        const startCellY = Math.floor(room.y / cellSize);
-        const endCellX = Math.floor((room.x + room.width) / cellSize);
-        const endCellY = Math.floor((room.y + room.height) / cellSize);
-
-        // Register room in all cells it overlaps
-        for (let cellX = startCellX; cellX <= endCellX; cellX++) {
-          for (let cellY = startCellY; cellY <= endCellY; cellY++) {
-            const cellKey = `${cellX},${cellY}`;
-
-            if (!this.spatialIndex.has(cellKey)) {
-              this.spatialIndex.set(cellKey, { rooms: [], corridors: [] });
-            }
-
-            this.spatialIndex.get(cellKey).rooms.push(room);
-          }
-        }
-      });
-    }
-
-    // Index corridors with improved bounding box calculation
-    if (this.mapData && this.mapData.corridors) {
-      this.mapData.corridors.forEach((corridor) => {
-        // Ensure corridor has the required properties
-        if (!corridor.start || !corridor.end) {
-          console.warn("Corridor missing required properties:", corridor);
-          return;
-        }
-
-        // Calculate bounding box of corridor in tile coordinates
-        let minX = Math.min(corridor.start.x, corridor.end.x);
-        let minY = Math.min(corridor.start.y, corridor.end.y);
-        let maxX = Math.max(corridor.start.x, corridor.end.x);
-        let maxY = Math.max(corridor.start.y, corridor.end.y);
-
-        // Adjust for waypoint if present
-        if (corridor.waypoint) {
-          minX = Math.min(minX, corridor.waypoint.x);
-          minY = Math.min(minY, corridor.waypoint.y);
-          maxX = Math.max(maxX, corridor.waypoint.x);
-          maxY = Math.max(maxY, corridor.waypoint.y);
-        }
-
-        // Expand bounding box by corridor width
-        const width = corridor.width || 3;
-        minX -= Math.ceil(width / 2);
-        minY -= Math.ceil(width / 2);
-        maxX += Math.ceil(width / 2);
-        maxY += Math.ceil(width / 2);
-
-        // Calculate cells this corridor occupies (in tile coordinates)
-        const startCellX = Math.floor(minX / cellSize);
-        const startCellY = Math.floor(minY / cellSize);
-        const endCellX = Math.floor(maxX / cellSize);
-        const endCellY = Math.floor(maxY / cellSize);
-
-        // Register corridor in all cells it overlaps
-        for (let cellX = startCellX; cellX <= endCellX; cellX++) {
-          for (let cellY = startCellY; cellY <= endCellY; cellY++) {
-            const cellKey = `${cellX},${cellY}`;
-
-            if (!this.spatialIndex.has(cellKey)) {
-              this.spatialIndex.set(cellKey, { rooms: [], corridors: [] });
-            }
-
-            this.spatialIndex.get(cellKey).corridors.push(corridor);
-          }
-        }
-      });
-    }
-
-    if (this.debug) {
-      console.log(`Spatial index created with ${this.spatialIndex.size} cells`);
-    }
-  }
-
-  /**
-   * Generate minimap graphics based on dungeon layout
-   */
-  generateMinimap() {
-    if (!this.mapData) return;
-
-    // Clear existing minimap elements
-    this.minimapElements.clear();
-
-    // Calculate world dimensions in pixels
-    const worldWidthPx = (this.mapData.worldTileWidth || 312) * this.tileSize;
-    const worldHeightPx = (this.mapData.worldTileHeight || 312) * this.tileSize;
-
+  drawMinimap() {
+    if (!this.mapData || !this.minimapGraphics) return;
+    
+    // Clear existing minimap
+    this.minimapGraphics.clear();
+    
     // Calculate scale to fit dungeon in minimap
+    const dungeonWidthPx = this.dungeonWidth * this.tileSize;
+    const dungeonHeightPx = this.dungeonHeight * this.tileSize;
     this.minimapScale = Math.min(
-      this.minimapSize / worldWidthPx,
-      this.minimapSize / worldHeightPx
-    );
-
-    this.debug && console.log(
-      `Minimap scale: ${this.minimapScale} (${this.minimapSize}px / ${worldWidthPx}px)`
-    );
-
-    // Draw rooms
-    if (this.mapData.rooms) {
-      this.mapData.rooms.forEach((room) => {
-        // Convert tile coordinates to pixels for rendering
-        const pixelX = room.x * this.tileSize;
-        const pixelY = room.y * this.tileSize;
-        const pixelWidth = room.width * this.tileSize;
-        const pixelHeight = room.height * this.tileSize;
-
-        // Set color based on room type
-        if (room.type === "spawn") {
-          this.minimapElements.fillStyle(0x8800ff, 0.8); // Purple for spawn rooms
-        } else {
-          this.minimapElements.fillStyle(0x888888, 0.6); // Gray for normal rooms
+      this.minimapSize / dungeonWidthPx,
+      this.minimapSize / dungeonHeightPx
+    ) * 0.9; // 90% of available size to leave some margin
+    
+    // Draw tiles layer first (simplified representation)
+    if (this.mapData.layers && this.mapData.layers.tiles) {
+      this.minimapGraphics.fillStyle(0x333333, 0.8); // Floor color
+      
+      // Draw all floors as a base
+      this.minimapGraphics.fillRect(
+        this.minimapX + 5,
+        this.minimapY + 5,
+        this.minimapSize - 10,
+        this.minimapSize - 10
+      );
+      
+      // Draw walls
+      this.minimapGraphics.fillStyle(0x666666, 0.8); // Wall color
+      
+      // Process the tiles array
+      for (let y = 0; y < this.mapData.layers.tiles.length; y++) {
+        for (let x = 0; x < this.mapData.layers.tiles[y].length; x++) {
+          const tile = this.mapData.layers.tiles[y][x];
+          
+          // Only draw walls, floor is already drawn as background
+          if (tile === 1 || tile > 1) { // Wall or special tile
+            const miniX = this.minimapX + x * this.minimapScale * this.tileSize;
+            const miniY = this.minimapY + y * this.minimapScale * this.tileSize;
+            const miniSize = this.minimapScale * this.tileSize;
+            
+            this.minimapGraphics.fillRect(miniX, miniY, miniSize, miniSize);
+          }
         }
-
-        // Draw room rectangle on minimap (scaled)
-        this.minimapElements.fillRect(
-          this.minimapX + pixelX * this.minimapScale,
-          this.minimapY + pixelY * this.minimapScale,
-          pixelWidth * this.minimapScale,
-          pixelHeight * this.minimapScale
-        );
+      }
+    }
+    
+    // Draw spawn points
+    if (this.mapData.spawnPoints) {
+      this.minimapGraphics.fillStyle(0x8800FF, 1); // Purple for spawn points
+      
+      this.mapData.spawnPoints.forEach(spawn => {
+        const miniX = this.minimapX + spawn.x * this.minimapScale * this.tileSize;
+        const miniY = this.minimapY + spawn.y * this.minimapScale * this.tileSize;
+        
+        this.minimapGraphics.fillCircle(miniX, miniY, 4);
       });
     }
-
-    // Draw corridors
-    if (this.mapData.corridors) {
-      this.minimapElements.lineStyle(2, 0x666666, 0.5);
-
-      this.mapData.corridors.forEach((corridor) => {
-        // Convert tile coordinates to pixels
-        const start = {
-          x:
-            this.minimapX +
-            corridor.start.x * this.tileSize * this.minimapScale,
-          y:
-            this.minimapY +
-            corridor.start.y * this.tileSize * this.minimapScale,
-        };
-
-        const end = {
-          x: this.minimapX + corridor.end.x * this.tileSize * this.minimapScale,
-          y: this.minimapY + corridor.end.y * this.tileSize * this.minimapScale,
-        };
-
-        if (corridor.waypoint) {
-          const waypoint = {
-            x:
-              this.minimapX +
-              corridor.waypoint.x * this.tileSize * this.minimapScale,
-            y:
-              this.minimapY +
-              corridor.waypoint.y * this.tileSize * this.minimapScale,
-          };
-
-          // Draw L-shaped corridor with waypoint
-          this.minimapElements.beginPath();
-          this.minimapElements.moveTo(start.x, start.y);
-          this.minimapElements.lineTo(waypoint.x, waypoint.y);
-          this.minimapElements.lineTo(end.x, end.y);
-          this.minimapElements.strokePath();
-        } else {
-          // Draw straight corridor
-          this.minimapElements.beginPath();
-          this.minimapElements.moveTo(start.x, start.y);
-          this.minimapElements.lineTo(end.x, end.y);
-          this.minimapElements.strokePath();
-        }
-      });
-    }
-
+    
     // Add floor level text
     if (this.floorText) {
       this.floorText.destroy();
     }
-
-    this.floorText = this.scene.add
-      .text(
-        this.minimapX + this.minimapSize / 2,
-        this.minimapY + this.minimapSize - 15,
-        `Floor ${this.mapData.floorLevel || 1}`,
-        { fontSize: "12px", fill: "#ffffff" }
-      )
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(1001);
-
+    
+    this.floorText = this.scene.add.text(
+      this.minimapX + this.minimapSize / 2,
+      this.minimapY + this.minimapSize - 15,
+      `Floor ${this.mapData.floorLevel || 1}`,
+      { fontSize: '12px', fill: '#ffffff' }
+    ).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+    
     this.minimapContainer.add(this.floorText);
   }
 
   /**
-   * Update minimap with player position
-   * @param {number} x - Player x position in pixels
-   * @param {number} y - Player y position in pixels
+   * Update which tiles are visible based on camera position
    */
-  update(x, y) {
-    // Skip if no map loaded
-    if (!this.mapData) return;
-
-    // Update visible area based on camera position
-    this.updateVisibleArea();
-
-    // Update minimap player marker
-    this.updateMinimapMarker(x, y);
-  }
-
-  /**
-   * Update minimap with player position
-   * @param {number} x - Player x position in pixels
-   * @param {number} y - Player y position in pixels
-   */
-  updateMinimapMarker(x, y) {
-    if (!this.playerMarker || !this.minimapScale) return;
-
-    // Calculate position on minimap - using world pixel coordinates
-    const minimapX = this.minimapX + x * this.minimapScale;
-    const minimapY = this.minimapY + y * this.minimapScale;
-
-    // Update marker position
-    this.playerMarker.setPosition(minimapX, minimapY);
-
-    // Debug output the position of minimap and marker
-    /*if (this.debug && Math.random() < 0.01) {
-      // Only log occasionally
-      console.log(
-        `Player at ${x},${y} => Minimap marker at ${minimapX},${minimapY}`
-      );
-      console.log(
-        `Minimap at ${this.minimapX},${this.minimapY}, scale ${this.minimapScale}`
-      );
-    }*/
-  }
-
-  /**
-   * Get entities in the current visible area
-   */
-  getVisibleEntities() {
-    if (!this.mapData || !this.spatialIndex)
-      return { rooms: [], corridors: [] };
-
-    // Get camera view bounds in pixels
+  updateVisibleTiles() {
+    if (!this.mapData || !this.mapData.layers) return;
+    
+    // Get camera bounds
     const camera = this.scene.cameras.main;
-
-    // Convert screen bounds to world coordinates with buffer in pixels
     const viewportBounds = {
-      left: camera.scrollX - this.cullingBuffer * this.tileSize,
-      right: camera.scrollX + camera.width + this.cullingBuffer * this.tileSize,
-      top: camera.scrollY - this.cullingBuffer * this.tileSize,
-      bottom:
-        camera.scrollY + camera.height + this.cullingBuffer * this.tileSize,
+      left: camera.scrollX,
+      right: camera.scrollX + camera.width,
+      top: camera.scrollY,
+      bottom: camera.scrollY + camera.height
     };
-
-    // Convert to tile coordinates
-    const startTileX = Math.floor(viewportBounds.left / this.tileSize);
-    const startTileY = Math.floor(viewportBounds.top / this.tileSize);
-    const endTileX = Math.ceil(viewportBounds.right / this.tileSize);
-    const endTileY = Math.ceil(viewportBounds.bottom / this.tileSize);
-
-    // Convert to cell coordinates (for spatial index lookup)
-    const cellSize = 10; // Same as used in createSpatialIndex
-    const startCellX = Math.floor(startTileX / cellSize);
-    const startCellY = Math.floor(startTileY / cellSize);
-    const endCellX = Math.floor(endTileX / cellSize);
-    const endCellY = Math.floor(endTileY / cellSize);
-
-    // Track visible entities
-    const visibleRooms = new Set();
-    const visibleCorridors = new Set();
-
-    // Collect entities from cells
-    for (let cellX = startCellX; cellX <= endCellX; cellX++) {
-      for (let cellY = startCellY; cellY <= endCellY; cellY++) {
-        const cellKey = `${cellX},${cellY}`;
-
-        // Skip if cell has no entities
-        if (!this.spatialIndex.has(cellKey)) continue;
-
-        const cell = this.spatialIndex.get(cellKey);
-
-        // Add rooms from this cell
-        cell.rooms.forEach((room) => {
-          visibleRooms.add(room);
-        });
-
-        // Add corridors from this cell
-        cell.corridors.forEach((corridor) => {
-          visibleCorridors.add(corridor);
-        });
-      }
-    }
-
-    return {
-      rooms: Array.from(visibleRooms),
-      corridors: Array.from(visibleCorridors),
-    };
-  }
-
-  /**
-   * Update the visible area based on camera position
-   */
-  updateVisibleArea() {
-    if (!this.mapData) return;
-
-    const startTime = performance.now();
-
-    // Get visible entities
-    const { rooms, corridors } = this.getVisibleEntities();
-
-    // Remove entities that are no longer visible
-    this.cullInvisibleEntities(rooms, corridors);
-
-    // Render visible entities
-    this.renderVisibleRooms(rooms);
-    this.renderVisibleCorridors(corridors);
-
-    // Update render stats
-    this.renderStats.renderTime = performance.now() - startTime;
-    this.renderStats.visibleTiles = this.visibleTiles.size;
-
-    // Update debug text
-    if (this.debug && this.debugText) {
-      this.debugText.setText(
-        `Render: ${Math.round(this.renderStats.renderTime)}ms | ` +
-          `Visible: ${this.renderStats.visibleTiles} | ` +
-          `Rooms: ${rooms.length} | ` +
-          `Corridors: ${corridors.length}`
-      );
-    }
-  }
-
-  /**
-   * Render visible rooms
-   * @param {Array} rooms - Array of visible room objects
-   */
-  renderVisibleRooms(rooms) {
-    // Process each room
-    rooms.forEach((room) => {
-      // Skip if room already rendered
-      if (this.visibleTiles.has(`room_${room.id}`)) return;
-
-      // Mark room as rendered
-      this.visibleTiles.set(`room_${room.id}`, true);
-
-      // Render room layout
-      if (room.layout) {
-        for (let y = 0; y < room.layout.length; y++) {
-          const row = room.layout[y];
-
-          for (let x = 0; x < row.length; x++) {
-            const tileChar = row.charAt(x);
-            // Convert room position (in tiles) + internal position to tile coordinates
-            const tileX = room.x + x;
-            const tileY = room.y + y;
-
-            // Create tile based on type
-            this.createTile(tileChar, tileX, tileY, room.type);
+    
+    // Add a buffer zone around the viewport (in tiles)
+    const bufferTiles = 3;
+    
+    // Convert viewport bounds to tile coordinates
+    const startTileX = Math.max(0, Math.floor(viewportBounds.left / this.tileSize) - bufferTiles);
+    const endTileX = Math.min(this.dungeonWidth - 1, Math.ceil(viewportBounds.right / this.tileSize) + bufferTiles);
+    const startTileY = Math.max(0, Math.floor(viewportBounds.top / this.tileSize) - bufferTiles);
+    const endTileY = Math.min(this.dungeonHeight - 1, Math.ceil(viewportBounds.bottom / this.tileSize) + bufferTiles);
+    
+    // Track which tiles should be visible
+    const shouldBeVisible = new Set();
+    
+    // Create tiles that should be visible
+    for (let y = startTileY; y <= endTileY; y++) {
+      for (let x = startTileX; x <= endTileX; x++) {
+        // Skip if outside array bounds
+        if (!this.mapData.layers.tiles[y] || typeof this.mapData.layers.tiles[y][x] === 'undefined') {
+          continue;
+        }
+        
+        // Generate unique ID for this tile
+        const tileId = `tile_${x}_${y}`;
+        shouldBeVisible.add(tileId);
+        
+        // Create tile if not already visible
+        if (!this.visibleTiles.has(tileId)) {
+          this.createTile(x, y, this.mapData.layers.tiles[y][x]);
+        }
+        
+        // Create prop if present
+        const propId = `prop_${x}_${y}`;
+        if (this.mapData.layers.props && 
+            this.mapData.layers.props[y] && 
+            this.mapData.layers.props[y][x] > 0) {
+          
+          shouldBeVisible.add(propId);
+          
+          if (!this.visibleTiles.has(propId)) {
+            this.createProp(x, y, this.mapData.layers.props[y][x]);
+          }
+        }
+        
+        // Create monster if present
+        const monsterId = `monster_${x}_${y}`;
+        if (this.mapData.layers.monsters && 
+            this.mapData.layers.monsters[y] && 
+            this.mapData.layers.monsters[y][x] > 0) {
+          
+          shouldBeVisible.add(monsterId);
+          
+          if (!this.visibleTiles.has(monsterId)) {
+            this.createMonster(x, y, this.mapData.layers.monsters[y][x]);
           }
         }
       }
-
-      // Render room objects if any
-      if (room.objects) {
-        room.objects.forEach((obj) => {
-          const tileX = room.x + obj.x;
-          const tileY = room.y + obj.y;
-
-          // Create object
-          this.createObject(obj.type, tileX, tileY);
-        });
+    }
+    
+    // Hide tiles that are not in view
+    this.visibleTiles.forEach((object, id) => {
+      if (!shouldBeVisible.has(id)) {
+        this.recycleTile(id, object);
       }
     });
+    
+    // Debug info
+    if (this.debug && this.debugText) {
+      this.debugText.setText(
+        `Visible: ${shouldBeVisible.size} | Pool: ${
+          this.objectPools.floor.length + 
+          this.objectPools.wall.length +
+          this.objectPools.prop.length + 
+          this.objectPools.monster.length
+        }`
+      );
+      
+      // Draw debug visualization of culling
+      if (this.debugGraphics) {
+        this.debugGraphics.clear();
+        this.debugGraphics.lineStyle(2, 0xff0000, 0.8);
+        this.debugGraphics.strokeRect(
+          startTileX * this.tileSize,
+          startTileY * this.tileSize,
+          (endTileX - startTileX + 1) * this.tileSize,
+          (endTileY - startTileY + 1) * this.tileSize
+        );
+      }
+    }
   }
 
   /**
-   * Render visible corridors
-   * @param {Array} corridors - Array of visible corridor objects
+   * Create a tile at the specified position
+   * @param {number} x - Tile x position
+   * @param {number} y - Tile y position
+   * @param {number} tileValue - Tile value from the map data
    */
-  renderVisibleCorridors(corridors) {
-    // Early exit if no corridors
-    if (!corridors || corridors.length === 0) return;
+  createTile(x, y, tileValue) {
+    // Skip empty tiles (value 0 is usually empty/air)
+    if (tileValue === 0) return;
     
-    // Limit the number of corridors rendered per frame
-    // Most important corridors are those closest to the center of the screen
-    const maxCorridorsPerFrame = 20;
+    // Get tile definition
+    const tileDef = this.tileDefinitions[tileValue] || this.tileDefinitions[1]; // Default to wall
     
-    if (corridors.length > maxCorridorsPerFrame) {
-      // Get camera center position
-      const camera = this.scene.cameras.main;
-      const centerX = camera.scrollX + camera.width / 2;
-      const centerY = camera.scrollY + camera.height / 2;
-      
-      // Sort corridors by distance to camera center
-      corridors = corridors.map(corridor => {
-        // Get corridor center (using any available coordinate format)
-        const start = corridor.start || corridor.s || { x: 0, y: 0 };
-        const end = corridor.end || corridor.e || { x: 0, y: 0 };
-        
-        const centerPosX = (start.x + end.x) / 2 * this.tileSize;
-        const centerPosY = (start.y + end.y) / 2 * this.tileSize;
-        
-        // Calculate distance
-        const dx = centerPosX - centerX;
-        const dy = centerPosY - centerY;
-        const distSq = dx * dx + dy * dy;
-        
-        return {
-          corridor,
-          distSq
-        };
-      })
-      .sort((a, b) => a.distSq - b.distSq)
-      .slice(0, maxCorridorsPerFrame)
-      .map(item => item.corridor);
-    }
+    // Create the tile
+    let tile;
     
-    // Now render the (possibly reduced) corridor list
-    for (let i = 0; i < corridors.length; i++) {
-      const corridor = corridors[i];
-      
-      // Generate a stable ID for this corridor
-      const corridorKey = `corridor_${corridor.id || `${i}_${corridor.start?.x}_${corridor.start?.y}`}`;
-      
-      // Skip if already rendered
-      if (this.visibleTiles.has(corridorKey)) continue;
-      
-      // Mark corridor as rendered
-      this.visibleTiles.set(corridorKey, true);
-      
-      // Render the corridor using a simplified approach
-      this.renderCorridorSimple(corridor, corridorKey);
-    }
-  }
-  
-  // Simplified corridor rendering that minimizes calculations and draw calls
-  renderCorridorSimple(corridor, corridorKey) {
-    // Handle different property naming conventions
-    const start = corridor.start || corridor.s || { x: 0, y: 0 };
-    const end = corridor.end || corridor.e || { x: 0, y: 0 };
-    const waypoint = corridor.waypoint || corridor.w;
+    // World position in pixels
+    const worldX = x * this.tileSize + this.tileSize / 2;
+    const worldY = y * this.tileSize + this.tileSize / 2;
     
-    // Ensure required properties exist
-    if (!start || !end) return null;
-    
-    // Get corridor width in pixels
-    const width = (corridor.width || 3) * this.tileSize;
-    
-    // Get color
-    const color = corridor.isSpawnCorridor ? 0x8800ff : 0x666666;
-    
-    // Create or reuse a graphics object
-    let graphics;
-    if (this.objectPools.corridor.length > 0) {
-      graphics = this.objectPools.corridor.pop();
-      graphics.clear();
-      graphics.setVisible(true);
+    // Reuse from object pool if possible
+    if (tileDef.type === 'floor' && this.objectPools.floor.length > 0) {
+      tile = this.objectPools.floor.pop();
+      tile.setPosition(worldX, worldY);
+      tile.setVisible(true);
+    } else if (tileDef.type === 'wall' && this.objectPools.wall.length > 0) {
+      tile = this.objectPools.wall.pop();
+      tile.setPosition(worldX, worldY);
+      tile.setVisible(true);
     } else {
-      graphics = this.scene.add.graphics();
-      // Add to floor layer
-      this.layers.floor.add(graphics);
-    }
-    
-    // Store corridor ID for recycling
-    graphics._corridorId = corridorKey;
-    
-    // Set fill style once
-    graphics.fillStyle(color, 0.8);
-    
-    // Convert tile coordinates to pixel coordinates (efficient)
-    const s = {
-      x: start.x * this.tileSize + this.tileSize/2,
-      y: start.y * this.tileSize + this.tileSize/2
-    };
-    
-    const e = {
-      x: end.x * this.tileSize + this.tileSize/2,
-      y: end.y * this.tileSize + this.tileSize/2
-    };
-    
-    if (waypoint) {
-      const w = {
-        x: waypoint.x * this.tileSize + this.tileSize/2,
-        y: waypoint.y * this.tileSize + this.tileSize/2
-      };
+      // Create new tile
+      tile = this.scene.add.rectangle(
+        worldX,
+        worldY,
+        this.tileSize,
+        this.tileSize,
+        tileDef.color
+      );
       
-      // Draw L-shaped corridor more efficiently
-      // First segment
-      this.drawCorridorSegmentEfficient(graphics, s, w, width);
-      
-      // Second segment
-      this.drawCorridorSegmentEfficient(graphics, w, e, width);
-      
-      // Junction circle (just one draw call)
-      graphics.fillCircle(w.x, w.y, width/2);
-    } else {
-      // Straight corridor
-      this.drawCorridorSegmentEfficient(graphics, s, e, width);
+      // Add to appropriate layer
+      this.layers.tiles.add(tile);
     }
     
     // Store in visible tiles map
-    this.visibleTiles.set(corridorKey, graphics);
-    
-    return graphics;
-  }
-  
-  // Ultra-efficient corridor segment drawing
-  drawCorridorSegmentEfficient(graphics, start, end, width) {
-    // Calculate direction and length
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const length = Math.sqrt(dx * dx + dy * dy);
-    
-    // Skip if too short
-    if (length < 1) return;
-    
-    // Half width
-    const halfWidth = width / 2;
-    
-    // Normalized perpendicular vector
-    const perpX = -dy / length * halfWidth;
-    const perpY = dx / length * halfWidth;
-    
-    // Draw rectangle in one operation
-    graphics.beginPath();
-    graphics.moveTo(start.x + perpX, start.y + perpY);
-    graphics.lineTo(end.x + perpX, end.y + perpY);
-    graphics.lineTo(end.x - perpX, end.y - perpY);
-    graphics.lineTo(start.x - perpX, start.y - perpY);
-    graphics.closePath();
-    graphics.fillPath();
+    this.visibleTiles.set(`tile_${x}_${y}`, tile);
   }
 
   /**
-   * Render a corridor
-   * @param {Object} corridor - Corridor data
+   * Create a prop at the specified position
+   * @param {number} x - Tile x position
+   * @param {number} y - Tile y position
+   * @param {number} propValue - Prop value from the map data
    */
-  renderCorridor(corridor) {
-    // Handle different property naming conventions that might be coming from server
-    const start = corridor.start || corridor.s || { x: 0, y: 0 };
-    const end = corridor.end || corridor.e || { x: 0, y: 0 };
-    const waypoint = corridor.waypoint || corridor.w || null;
+  createProp(x, y, propValue) {
+    // Skip empty props
+    if (propValue === 0) return;
     
-    // Convert tile coordinates to pixels
-    const startPixel = {
-      x: start.x * this.tileSize + this.tileSize / 2,
-      y: start.y * this.tileSize + this.tileSize / 2,
-    };
-  
-    const endPixel = {
-      x: end.x * this.tileSize + this.tileSize / 2,
-      y: end.y * this.tileSize + this.tileSize / 2,
-    };
-  
-    const waypointPixel = waypoint
-      ? {
-          x: waypoint.x * this.tileSize + this.tileSize / 2,
-          y: waypoint.y * this.tileSize + this.tileSize / 2,
-        }
-      : null;
-  
-    // Ensure corridor width is properly set (convert from tiles to pixels)
-    const corridorWidthPx = (corridor.width || 3) * this.tileSize;
+    // Get prop definition
+    const propDef = this.propDefinitions[propValue] || { type: 'generic', color: 0xFFFFFF };
     
-    // Set color based on corridor type
-    const color = corridor.isSpawnCorridor ? 0x8800ff : 0x666666;
-    const alpha = 0.9; // Higher opacity for better visibility
-  
-    // Create corridor graphic
-    let corridorGraphic;
+    // Create the prop
+    let prop;
     
-    if (this.objectPools.corridor.length > 0) {
-      corridorGraphic = this.objectPools.corridor.pop();
-      corridorGraphic.clear();
-      corridorGraphic.setVisible(true);
+    // World position in pixels
+    const worldX = x * this.tileSize + this.tileSize / 2;
+    const worldY = y * this.tileSize + this.tileSize / 2;
+    
+    // Reuse from object pool if possible
+    if (this.objectPools.prop.length > 0) {
+      prop = this.objectPools.prop.pop();
+      prop.setPosition(worldX, worldY);
+      prop.setVisible(true);
+      
+      // Adjust appearance based on prop type
+      if (prop.type !== propDef.type) {
+        // Different prop type, need to update appearance
+        this.updatePropAppearance(prop, propDef);
+      }
     } else {
-      corridorGraphic = this.scene.add.graphics();
+      // Create new prop
+      prop = this.createPropObject(worldX, worldY, propDef);
+      
+      // Add to props layer
+      this.layers.props.add(prop);
     }
-  
-    // Set style
-    corridorGraphic.fillStyle(color, alpha);
-  
-    // Draw corridor
-    if (waypointPixel) {
-      // Render L-shaped corridor
-      this.renderCorridorSegmentImproved(
-        corridorGraphic,
-        startPixel,
-        waypointPixel,
-        corridorWidthPx
+    
+    // Store in visible tiles map
+    this.visibleTiles.set(`prop_${x}_${y}`, prop);
+  }
+
+  /**
+   * Create a monster at the specified position
+   * @param {number} x - Tile x position
+   * @param {number} y - Tile y position
+   * @param {number} monsterValue - Monster value from the map data
+   */
+  createMonster(x, y, monsterValue) {
+    // Skip empty monsters
+    if (monsterValue === 0) return;
+    
+    // Create a basic monster representation
+    let monster;
+    
+    // World position in pixels
+    const worldX = x * this.tileSize + this.tileSize / 2;
+    const worldY = y * this.tileSize + this.tileSize / 2;
+    
+    // Get monster color based on type
+    const monsterColors = [
+      0xFF0000, // 1 - Red
+      0x00FF00, // 2 - Green
+      0x0000FF, // 3 - Blue
+      0xFF00FF, // 4 - Purple
+      0x00FFFF, // 5 - Cyan
+      0xFFFF00, // 6 - Yellow
+      0xFF8800, // 7 - Orange
+      0x88FF00  // 8 - Lime
+    ];
+    
+    const monsterColor = monsterColors[(monsterValue - 1) % monsterColors.length] || 0xFF0000;
+    
+    // Reuse from object pool if possible
+    if (this.objectPools.monster.length > 0) {
+      monster = this.objectPools.monster.pop();
+      monster.setPosition(worldX, worldY);
+      monster.setVisible(true);
+      monster.setFillStyle(monsterColor);
+    } else {
+      // Create new monster
+      monster = this.scene.add.circle(
+        worldX,
+        worldY,
+        this.tileSize / 3, // Monster size
+        monsterColor
       );
       
-      this.renderCorridorSegmentImproved(
-        corridorGraphic,
-        waypointPixel,
-        endPixel,
-        corridorWidthPx
-      );
-      
-      // Add rounded corner for L-shape
-      corridorGraphic.fillCircle(
-        waypointPixel.x, 
-        waypointPixel.y, 
-        corridorWidthPx / 2
-      );
-    } else {
-      // Render straight corridor
-      this.renderCorridorSegmentImproved(
-        corridorGraphic,
-        startPixel,
-        endPixel,
-        corridorWidthPx
-      );
+      // Add to monsters layer
+      this.layers.monsters.add(monster);
     }
-  
-    // Add to floor layer
-    this.layers.floor.add(corridorGraphic);
     
-    // Store in visible tiles
-    this.visibleTiles.set(`corridor_${corridor.id || corridor.s?.x}_${corridor.s?.y}`, corridorGraphic);
+    // Store in visible tiles map
+    this.visibleTiles.set(`monster_${x}_${y}`, monster);
+  }
+
+  /**
+   * Create a prop object based on its definition
+   * @param {number} x - World x position
+   * @param {number} y - World y position
+   * @param {Object} propDef - Prop definition
+   * @returns {Object} - Created prop object
+   */
+  createPropObject(x, y, propDef) {
+    let prop;
     
-    return corridorGraphic;
-  }
-
-  // Improved corridor segment rendering
-  renderCorridorSegmentImproved(graphics, start, end, widthPx) {
-    // Calculate corridor properties
-    const halfWidth = widthPx / 2;
-    const angle = Math.atan2(end.y - start.y, end.x - start.x);
-    const length = Math.sqrt(
-      Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
-    );
-    
-    // Skip if too short
-    if (length < 1) return;
-  
-    // Calculate perpendicular offset vectors
-    const perpX = Math.sin(angle) * halfWidth;
-    const perpY = -Math.cos(angle) * halfWidth;
-  
-    // Define corners
-    const corners = [
-      { x: start.x - perpX, y: start.y - perpY },
-      { x: start.x + perpX, y: start.y + perpY },
-      { x: end.x + perpX, y: end.y + perpY },
-      { x: end.x - perpX, y: end.y - perpY }
-    ];
-  
-    // Draw corridor polygon
-    graphics.beginPath();
-    graphics.moveTo(corners[0].x, corners[0].y);
-  
-    for (let i = 1; i < corners.length; i++) {
-      graphics.lineTo(corners[i].x, corners[i].y);
-    }
-  
-    graphics.closePath();
-    graphics.fillPath();
-  }
-
-  // New method to render a rounded corner at corridor junctions
-  renderCorridorCorner(graphics, waypoint, start, end, widthPx) {
-    // Calculate half width
-    const halfWidth = widthPx / 2;
-
-    // Determine direction vectors
-    const dir1 = {
-      x: waypoint.x - start.x,
-      y: waypoint.y - start.y,
-    };
-
-    const dir2 = {
-      x: end.x - waypoint.x,
-      y: end.y - waypoint.y,
-    };
-
-    // Normalize direction vectors
-    const len1 = Math.sqrt(dir1.x * dir1.x + dir1.y * dir1.y);
-    const len2 = Math.sqrt(dir2.x * dir2.x + dir2.y * dir2.y);
-
-    dir1.x /= len1;
-    dir1.y /= len1;
-    dir2.x /= len2;
-    dir2.y /= len2;
-
-    // Draw a filled circle at the waypoint to create a rounded corner
-    graphics.fillCircle(waypoint.x, waypoint.y, halfWidth);
-  }
-
-  /**
-   * Render a corridor segment
-   * @param {Phaser.GameObjects.Graphics} graphics - Graphics object
-   * @param {Object} start - Start point {x, y} in pixels
-   * @param {Object} end - End point {x, y} in pixels
-   * @param {number} width - Corridor width in tiles
-   */
-  renderCorridorSegment(graphics, start, end, width) {
-    // Calculate corridor properties
-    const halfWidth = (width * this.tileSize) / 2;
-    const angle = Math.atan2(end.y - start.y, end.x - start.x);
-    const length = Math.sqrt(
-      Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
-    );
-
-    // Calculate perpendicular offset
-    const perpX = Math.sin(angle) * halfWidth;
-    const perpY = -Math.cos(angle) * halfWidth;
-
-    // Define corners
-    const corners = [
-      { x: start.x - perpX, y: start.y - perpY },
-      { x: start.x + perpX, y: start.y + perpY },
-      { x: end.x + perpX, y: end.y + perpY },
-      { x: end.x - perpX, y: end.y - perpY },
-    ];
-
-    // Draw corridor polygon
-    graphics.beginPath();
-    graphics.moveTo(corners[0].x, corners[0].y);
-
-    for (let i = 1; i < corners.length; i++) {
-      graphics.lineTo(corners[i].x, corners[i].y);
-    }
-
-    graphics.closePath();
-    graphics.fillPath();
-  }
-
-  /**
-   * Create a tile sprite
-   * @param {string} tileChar - Tile character from layout
-   * @param {number} x - World x position in tile coordinates
-   * @param {number} y - World y position in tile coordinates
-   * @param {string} roomType - Room type for coloring
-   */
-  createTile(tileChar, x, y, roomType = "small") {
-    // Generate unique ID for this tile
-    const tileId = `tile_${x}_${y}_${tileChar}`;
-
-    // Skip if already rendered
-    if (this.visibleTiles.has(tileId)) return;
-
-    // Mark as rendered
-    this.visibleTiles.set(tileId, true);
-
-    // Color for this tile
-    const tileColor = getTileColor(tileChar, roomType);
-
-    // Create different tiles based on type
-    switch (tileChar) {
-      case TILE_TYPES.WALL:
-        this.createWallTile(x, y, tileColor);
-        break;
-      case TILE_TYPES.FLOOR:
-        this.createFloorTile(x, y, tileColor);
-        break;
-      case TILE_TYPES.DOOR:
-        this.createDoorTile(x, y, tileColor);
-        break;
-      case TILE_TYPES.SPAWN:
-        this.createSpawnTile(x, y, tileColor);
-        break;
-      case TILE_TYPES.CHEST:
-      case TILE_TYPES.TORCH:
-        // For objects, create a floor tile first
-        this.createFloorTile(x, y, getTileColor(TILE_TYPES.FLOOR, roomType));
-        // Then add the object on top
-        this.createObject(tileChar.toLowerCase(), x, y);
-        break;
-      default:
-        // Default to floor for unknown tile types
-        this.createFloorTile(x, y, tileColor);
-    }
-  }
-
-  /**
-   * Create a wall tile
-   * @param {number} x - World x position in tile coordinates
-   * @param {number} y - World y position in tile coordinates
-   * @param {number} color - Tile color
-   */
-  createWallTile(x, y, color) {
-    // Convert tile coordinates to pixel coordinates
-    const pixelX = x * this.tileSize;
-    const pixelY = y * this.tileSize;
-
-    // Get a wall sprite from the pool or create new
-    let wall;
-
-    if (this.objectPools.wall.length > 0) {
-      wall = this.objectPools.wall.pop();
-      wall.setPosition(pixelX + this.tileSize / 2, pixelY + this.tileSize / 2);
-      wall.setSize(this.tileSize, this.tileSize);
-      wall.setVisible(true);
-    } else {
-      wall = this.scene.add.rectangle(
-        pixelX + this.tileSize / 2,
-        pixelY + this.tileSize / 2,
-        this.tileSize,
-        this.tileSize,
-        color
-      );
-
-      // Add to walls layer
-      this.layers.walls.add(wall);
-    }
-
-    // Set color
-    wall.setFillStyle(color);
-
-    // Store in visible tiles
-    this.visibleTiles.set(`tile_${x}_${y}_${TILE_TYPES.WALL}`, wall);
-  }
-
-  /**
-   * Create a floor tile
-   * @param {number} x - World x position in tile coordinates
-   * @param {number} y - World y position in tile coordinates
-   * @param {number} color - Tile color
-   */
-  createFloorTile(x, y, color) {
-    // Convert tile coordinates to pixel coordinates
-    const pixelX = x * this.tileSize;
-    const pixelY = y * this.tileSize;
-
-    // Get a floor sprite from the pool or create new
-    let floor;
-
-    if (this.objectPools.floor.length > 0) {
-      floor = this.objectPools.floor.pop();
-      floor.setPosition(pixelX + this.tileSize / 2, pixelY + this.tileSize / 2);
-      floor.setSize(this.tileSize, this.tileSize);
-      floor.setVisible(true);
-    } else {
-      floor = this.scene.add.rectangle(
-        pixelX + this.tileSize / 2,
-        pixelY + this.tileSize / 2,
-        this.tileSize,
-        this.tileSize,
-        color
-      );
-
-      // Add to floor layer
-      this.layers.floor.add(floor);
-    }
-
-    // Set color
-    floor.setFillStyle(color);
-
-    // Store in visible tiles
-    this.visibleTiles.set(`tile_${x}_${y}_${TILE_TYPES.FLOOR}`, floor);
-  }
-
-  /**
-   * Create a door tile
-   * @param {number} x - World x position in tile coordinates
-   * @param {number} y - World y position in tile coordinates
-   * @param {number} color - Tile color
-   */
-  createDoorTile(x, y, color) {
-    // Create floor tile first (doors are on top of floors)
-    this.createFloorTile(x, y, getTileColor(TILE_TYPES.FLOOR, "medium"));
-
-    // Convert tile coordinates to pixel coordinates
-    const pixelX = x * this.tileSize;
-    const pixelY = y * this.tileSize;
-
-    // Get a door sprite from the pool or create new
-    let door;
-
-    if (this.objectPools.object.length > 0) {
-      door = this.objectPools.object.pop();
-      door.setPosition(pixelX + this.tileSize / 2, pixelY + this.tileSize / 2);
-      door.setSize(this.tileSize * 0.8, this.tileSize * 0.8);
-      door.setVisible(true);
-    } else {
-      door = this.scene.add.rectangle(
-        pixelX + this.tileSize / 2,
-        pixelY + this.tileSize / 2,
-        this.tileSize * 0.8,
-        this.tileSize * 0.8,
-        color
-      );
-
-      // Add to objects layer
-      this.layers.objects.add(door);
-    }
-
-    // Set color
-    door.setFillStyle(color);
-
-    // Store in visible tiles
-    this.visibleTiles.set(`tile_${x}_${y}_${TILE_TYPES.DOOR}`, door);
-  }
-
-  /**
-   * Create a spawn tile
-   * @param {number} x - World x position in tile coordinates
-   * @param {number} y - World y position in tile coordinates
-   * @param {number} color - Tile color
-   */
-  createSpawnTile(x, y, color) {
-    // Create floor tile first
-    this.createFloorTile(x, y, getTileColor(TILE_TYPES.FLOOR, "spawn"));
-
-    // Convert tile coordinates to pixel coordinates
-    const pixelX = x * this.tileSize;
-    const pixelY = y * this.tileSize;
-
-    // Get a spawn sprite from the pool or create new
-    let spawn;
-
-    if (this.objectPools.object.length > 0) {
-      spawn = this.objectPools.object.pop();
-      spawn.setPosition(pixelX + this.tileSize / 2, pixelY + this.tileSize / 2);
-      spawn.setRadius(this.tileSize / 4);
-      spawn.setVisible(true);
-    } else {
-      spawn = this.scene.add.circle(
-        pixelX + this.tileSize / 2,
-        pixelY + this.tileSize / 2,
-        this.tileSize / 4,
-        color
-      );
-
-      // Add to objects layer
-      this.layers.objects.add(spawn);
-    }
-
-    // Set color
-    spawn.setFillStyle(color);
-
-    // Store in visible tiles
-    this.visibleTiles.set(`tile_${x}_${y}_${TILE_TYPES.SPAWN}`, spawn);
-  }
-
-  /**
-   * Create an object tile
-   * @param {string} type - Object type (chest, torch)
-   * @param {number} x - World x position in tile coordinates
-   * @param {number} y - World y position in tile coordinates
-   */
-  createObject(type, x, y) {
-    // Convert tile coordinates to pixel coordinates
-    const pixelX = x * this.tileSize;
-    const pixelY = y * this.tileSize;
-
-    // Get an object sprite from the pool or create new
-    let object;
-
-    if (this.objectPools.object.length > 0) {
-      object = this.objectPools.object.pop();
-      object.setPosition(
-        pixelX + this.tileSize / 2,
-        pixelY + this.tileSize / 2
-      );
-      object.setVisible(true);
-    } else {
-      // Create different objects based on type
-      switch (type) {
-        case "chest":
-          object = this.scene.add.rectangle(
-            pixelX + this.tileSize / 2,
-            pixelY + this.tileSize / 2,
-            this.tileSize * 0.6,
-            this.tileSize * 0.4,
-            0xffff00
-          );
-          break;
-        case "torch":
-          object = this.scene.add.circle(
-            pixelX + this.tileSize / 2,
-            pixelY + this.tileSize / 2,
-            this.tileSize / 6,
-            0xffaa00
-          );
-
-          // Add light effect
+    switch (propDef.type) {
+      case 'torch':
+        // Create torch with light effect
+        prop = this.scene.add.circle(x, y, this.tileSize / 4, propDef.color);
+        
+        // Add light effect if enabled
+        if (propDef.light) {
           const light = this.scene.add.circle(
-            pixelX + this.tileSize / 2,
-            pixelY + this.tileSize / 2,
-            this.tileSize,
-            0xffaa00,
+            x, y, 
+            this.tileSize * 2, 
+            propDef.color, 
             0.2
           );
-
-          // Animate light flicker
+          
+          // Animate light
           this.scene.tweens.add({
             targets: light,
-            radius: this.tileSize * 1.2,
             alpha: 0.1,
-            duration: 500,
-            yoyo: true,
-            repeat: -1,
-            ease: "Sine.easeInOut",
-          });
-
-          this.layers.overlay.add(light);
-          break;
-        case "spawn":
-          object = this.scene.add.circle(
-            pixelX + this.tileSize / 2,
-            pixelY + this.tileSize / 2,
-            this.tileSize / 3,
-            0x8800ff
-          );
-
-          // Add glow effect
-          const glow = this.scene.add.circle(
-            pixelX + this.tileSize / 2,
-            pixelY + this.tileSize / 2,
-            this.tileSize * 1.5,
-            0x8800ff,
-            0.2
-          );
-
-          // Animate glow pulse
-          this.scene.tweens.add({
-            targets: glow,
-            radius: this.tileSize * 2,
-            alpha: 0.1,
+            radius: this.tileSize * 2.5,
             duration: 1000,
             yoyo: true,
-            repeat: -1,
-            ease: "Sine.easeInOut",
+            repeat: -1
           });
-
-          this.layers.overlay.add(glow);
-          break;
-        default:
-          object = this.scene.add.circle(
-            pixelX + this.tileSize / 2,
-            pixelY + this.tileSize / 2,
-            this.tileSize / 4,
-            0xffffff
-          );
-      }
-
-      // Add to objects layer
-      this.layers.objects.add(object);
+          
+          this.layers.overlay.add(light);
+          prop.light = light;
+        }
+        break;
+        
+      case 'chest':
+        // Create chest as rectangle
+        prop = this.scene.add.rectangle(
+          x, y,
+          this.tileSize * 0.7,
+          this.tileSize * 0.5,
+          propDef.color
+        );
+        break;
+        
+      default:
+        // Generic prop as a square
+        prop = this.scene.add.rectangle(
+          x, y,
+          this.tileSize * 0.5,
+          this.tileSize * 0.5,
+          propDef.color
+        );
     }
-
-    // Store in visible tiles
-    this.visibleTiles.set(`object_${x}_${y}_${type}`, object);
+    
+    // Store prop type
+    prop.type = propDef.type;
+    
+    return prop;
   }
 
   /**
-   * Remove invisible entities from rendering
-   * @param {Array} visibleRooms - Currently visible rooms
-   * @param {Array} visibleCorridors - Currently visible corridors
+   * Update prop appearance when reusing from pool
+   * @param {Object} prop - Prop object to update
+   * @param {Object} propDef - New prop definition
    */
-  cullInvisibleEntities(visibleRooms, visibleCorridors) {
-    // Create sets of visible entity IDs
-    const visibleRoomIds = new Set(
-      visibleRooms.map((room) => `room_${room.id}`)
-    );
-    const visibleCorridorIds = new Set(
-      visibleCorridors.map((corridor) => `corridor_${corridor.id}`)
-    );
-
-    // Find tiles to remove
-    const tilesToRemove = [];
-
-    this.visibleTiles.forEach((value, key) => {
-      if (key.startsWith("room_") && !visibleRoomIds.has(key)) {
-        tilesToRemove.push(key);
-      } else if (key.startsWith("corridor_") && !visibleCorridorIds.has(key)) {
-        tilesToRemove.push(key);
-      } else if (key.startsWith("tile_") || key.startsWith("object_")) {
-        // Check if the tile's parent room/corridor is still visible
-        let isVisible = false;
-
-        // Check rooms
-        for (const roomId of visibleRoomIds) {
-          if (this.isTileInRoom(key, roomId.replace("room_", ""))) {
-            isVisible = true;
-            break;
-          }
+  updatePropAppearance(prop, propDef) {
+    // Update color
+    prop.setFillStyle(propDef.color);
+    
+    // Update type
+    prop.type = propDef.type;
+    
+    // Update size based on type
+    switch (propDef.type) {
+      case 'torch':
+        if (prop.geom && prop.geom.radius) {
+          prop.geom.radius = this.tileSize / 4;
         }
-
-        // Check corridors if not in a room
-        if (!isVisible) {
-          for (const corridorId of visibleCorridorIds) {
-            if (
-              this.isTileInCorridor(key, corridorId.replace("corridor_", ""))
-            ) {
-              isVisible = true;
-              break;
-            }
-          }
+        break;
+        
+      case 'chest':
+        if (prop.geom) {
+          prop.geom.width = this.tileSize * 0.7;
+          prop.geom.height = this.tileSize * 0.5;
         }
-
-        // Remove if not visible
-        if (!isVisible) {
-          tilesToRemove.push(key);
+        break;
+        
+      default:
+        if (prop.geom) {
+          prop.geom.width = this.tileSize * 0.5;
+          prop.geom.height = this.tileSize * 0.5;
         }
-      }
-    });
-
-    // Remove and pool invisible tiles
-    tilesToRemove.forEach((key) => {
-      const tile = this.visibleTiles.get(key);
-
-      // Only pool actual game objects
-      if (tile && typeof tile !== "boolean") {
-        // Hide and add to appropriate pool
-        tile.setVisible(false);
-
-        if (key.includes(`_${TILE_TYPES.WALL}`)) {
-          this.objectPools.wall.push(tile);
-        } else if (key.includes(`_${TILE_TYPES.FLOOR}`)) {
-          this.objectPools.floor.push(tile);
-        } else if (key.startsWith("object_")) {
-          this.objectPools.object.push(tile);
-        } else if (key.startsWith("corridor_")) {
-          this.objectPools.corridor.push(tile);
-        }
-      }
-
-      // Remove from visible tiles
-      this.visibleTiles.delete(key);
-    });
-
-    // Update pool size stat
-    this.renderStats.poolSize =
-      this.objectPools.floor.length +
-      this.objectPools.wall.length +
-      this.objectPools.object.length +
-      this.objectPools.corridor.length;
-
-    // Update hidden tiles stat
-    this.renderStats.hiddenTiles = this.renderStats.poolSize;
-  }
-
-  /**
-   * Check if a tile is in a specific room
-   * @param {string} tileKey - Tile identifier
-   * @param {string} roomId - Room identifier
-   * @returns {boolean} - True if the tile is in the room
-   */
-  isTileInRoom(tileKey, roomId) {
-    if (!this.mapData || !this.mapData.rooms) return false;
-
-    // Find room
-    const room = this.mapData.rooms.find((r) => r.id === roomId);
-    if (!room) return false;
-
-    // Extract coordinates from key (tile coordinates, not pixels)
-    const match = tileKey.match(/tile_(\d+)_(\d+)_/);
-    if (!match) return false;
-
-    const tileX = parseInt(match[1]);
-    const tileY = parseInt(match[2]);
-
-    // Check if tile is within room bounds
-    return (
-      tileX >= room.x &&
-      tileX < room.x + room.width &&
-      tileY >= room.y &&
-      tileY < room.y + room.height
-    );
-  }
-
-  /**
-   * Check if a tile is in a specific corridor
-   * @param {string} tileKey - Tile identifier
-   * @param {string} corridorId - Corridor identifier
-   * @returns {boolean} - True if the tile is in the corridor
-   */
-  isTileInCorridor(tileKey, corridorId) {
-    if (!this.mapData || !this.mapData.corridors) return false;
-
-    // Find corridor
-    const corridor = this.mapData.corridors.find((c) => c.id === corridorId);
-    if (!corridor) return false;
-
-    // Extract tile coordinates from key
-    const match = tileKey.match(/tile_(\d+)_(\d+)_/);
-    if (!match) return false;
-
-    const tileX = parseInt(match[1]);
-    const tileY = parseInt(match[2]);
-
-    // Convert tile to pixel for distance calc (center of tile)
-    const pointX = tileX * this.tileSize + this.tileSize / 2;
-    const pointY = tileY * this.tileSize + this.tileSize / 2;
-
-    // Convert corridor points to pixels (center of tiles)
-    const start = {
-      x: corridor.start.x * this.tileSize + this.tileSize / 2,
-      y: corridor.start.y * this.tileSize + this.tileSize / 2,
-    };
-
-    const end = {
-      x: corridor.end.x * this.tileSize + this.tileSize / 2,
-      y: corridor.end.y * this.tileSize + this.tileSize / 2,
-    };
-
-    // Corridor width in pixels
-    const corridorWidthPx = (corridor.width || 3) * this.tileSize;
-
-    // Check if within corridor segments
-    if (corridor.waypoint) {
-      const waypoint = {
-        x: corridor.waypoint.x * this.tileSize + this.tileSize / 2,
-        y: corridor.waypoint.y * this.tileSize + this.tileSize / 2,
-      };
-
-      // Check if within start-waypoint segment
-      if (
-        this.isPointInSegment(
-          { x: pointX, y: pointY },
-          start,
-          waypoint,
-          corridorWidthPx
-        )
-      ) {
-        return true;
-      }
-
-      // Check if within waypoint-end segment
-      if (
-        this.isPointInSegment(
-          { x: pointX, y: pointY },
-          waypoint,
-          end,
-          corridorWidthPx
-        )
-      ) {
-        return true;
-      }
-
-      // Check if within corner area (for L-shaped corridors)
-      const cornerRadius = corridorWidthPx / 2;
-      const dx = pointX - waypoint.x;
-      const dy = pointY - waypoint.y;
-      const distanceToCorner = Math.sqrt(dx * dx + dy * dy);
-
-      if (distanceToCorner <= cornerRadius) {
-        return true;
-      }
-    } else {
-      // Check if within start-end segment
-      if (
-        this.isPointInSegment(
-          { x: pointX, y: pointY },
-          start,
-          end,
-          corridorWidthPx
-        )
-      ) {
-        return true;
-      }
     }
-
-    return false;
-  }
-
-  /**
-   * Check if a point is within a line segment with thickness
-   * @param {Object} point - Point to check {x, y} in pixels
-   * @param {Object} segStart - Segment start {x, y} in pixels
-   * @param {Object} segEnd - Segment end {x, y} in pixels
-   * @param {number} thickness - Segment thickness in pixels
-   * @returns {boolean} - True if point is in segment
-   */
-  // Improved point-in-segment detection
-  isPointInSegment(point, segStart, segEnd, thickness) {
-    // Calculate segment length
-    const segLength = Math.sqrt(
-      Math.pow(segEnd.x - segStart.x, 2) + Math.pow(segEnd.y - segStart.y, 2)
-    );
-
-    // If segment is too short, treat as a point
-    if (segLength < 1) {
-      const dist = Math.sqrt(
-        Math.pow(point.x - segStart.x, 2) + Math.pow(point.y - segStart.y, 2)
+    
+    // Add light effect for torches if missing
+    if (propDef.type === 'torch' && propDef.light && !prop.light) {
+      const light = this.scene.add.circle(
+        prop.x, prop.y, 
+        this.tileSize * 2, 
+        propDef.color, 
+        0.2
       );
-      return dist <= thickness / 2;
+      
+      // Animate light
+      this.scene.tweens.add({
+        targets: light,
+        alpha: 0.1,
+        radius: this.tileSize * 2.5,
+        duration: 1000,
+        yoyo: true,
+        repeat: -1
+      });
+      
+      this.layers.overlay.add(light);
+      prop.light = light;
     }
+  }
 
-    // Calculate direction vector
-    const dirX = (segEnd.x - segStart.x) / segLength;
-    const dirY = (segEnd.y - segStart.y) / segLength;
-
-    // Calculate perpendicular vector
-    const perpX = -dirY;
-    const perpY = dirX;
-
-    // Vector from start to point
-    const vX = point.x - segStart.x;
-    const vY = point.y - segStart.y;
-
-    // Project point onto segment direction
-    const projDist = vX * dirX + vY * dirY;
-
-    // If projection falls outside segment, point is not in segment
-    if (projDist < 0 || projDist > segLength) {
-      return false;
+  /**
+   * Recycle a tile that is no longer visible
+   * @param {string} id - Tile ID
+   * @param {Object} object - Tile object
+   */
+  recycleTile(id, object) {
+    // Remove from visible tiles
+    this.visibleTiles.delete(id);
+    
+    // Hide the object
+    if (object && object.setVisible) {
+      object.setVisible(false);
     }
+    
+    // Add to appropriate object pool
+    if (id.startsWith('tile_')) {
+      // Determine if floor or wall based on type or color
+      const isWall = id.includes('wall') || 
+                    (object.fillColor && object.fillColor === this.tileDefinitions[1].color);
+      
+      if (isWall) {
+        this.objectPools.wall.push(object);
+      } else {
+        this.objectPools.floor.push(object);
+      }
+    } else if (id.startsWith('prop_')) {
+      // Handle light effect for torches
+      if (object.type === 'torch' && object.light) {
+        object.light.setVisible(false);
+      }
+      
+      this.objectPools.prop.push(object);
+    } else if (id.startsWith('monster_')) {
+      this.objectPools.monster.push(object);
+    }
+  }
 
-    // Calculate perpendicular distance from point to line
-    const perpDist = Math.abs(vX * perpX + vY * perpY);
-
-    // Check if distance is within half the thickness
-    return perpDist <= thickness / 2;
+  /**
+   * Update minimap with player position
+   * @param {number} x - Player x position in world
+   * @param {number} y - Player y position in world
+   */
+  update(x, y) {
+    // Update minimap player marker
+    if (this.playerMarker && this.minimapScale) {
+      const minimapX = this.minimapX + x * this.minimapScale;
+      const minimapY = this.minimapY + y * this.minimapScale;
+      
+      this.playerMarker.setPosition(minimapX, minimapY);
+    }
   }
 
   /**
    * Clear the current map
    */
   clearMap() {
-    // Reset visible tiles
-    this.visibleTiles.forEach((tile, key) => {
-      if (tile && typeof tile !== "boolean") {
-        tile.destroy();
-      }
+    // Hide all visible tiles
+    this.visibleTiles.forEach((object, id) => {
+      this.recycleTile(id, object);
     });
-
+    
+    // Clear visible tiles map
     this.visibleTiles.clear();
-
-    // Clear object pools
-    this.objectPools.floor = [];
-    this.objectPools.wall = [];
-    this.objectPools.object = [];
-    this.objectPools.corridor = [];
-    this.objectPools.overlay = [];
-
-    // Clear spatial index
-    this.spatialIndex.clear();
-
-    // Clear render stats
-    this.renderStats = {
-      visibleTiles: 0,
-      hiddenTiles: 0,
-      poolSize: 0,
-      renderTime: 0,
-    };
+    
+    // Clear minimap
+    if (this.minimapGraphics) {
+      this.minimapGraphics.clear();
+    }
+    
+    // Reset dungeon dimensions
+    this.dungeonWidth = 0;
+    this.dungeonHeight = 0;
+    
+    // Clear map data
+    this.mapData = null;
   }
 
   /**
    * Clean up resources
    */
   destroy() {
+    // Remove event listeners
+    this.scene.cameras.main.off('camerascroll', this.onCameraMove, this);
+    
+    // Clear map
     this.clearMap();
-
-    // Remove resize handler
-    this.scene.scale.off("resize", this.handleResize, this);
-
+    
+    // Destroy pools
+    Object.values(this.objectPools).forEach(pool => {
+      pool.forEach(obj => {
+        if (obj && obj.destroy) obj.destroy();
+      });
+      pool.length = 0;
+    });
+    
+    // Destroy layers
+    Object.values(this.layers).forEach(layer => {
+      if (layer && layer.destroy) {
+        layer.destroy(true);
+      }
+    });
+    
+    // Destroy minimap
     if (this.minimapContainer) {
       this.minimapContainer.destroy();
+      this.minimapContainer = null;
     }
-
-    if (this.floorText) {
-      this.floorText.destroy();
-    }
-
+    
+    // Destroy debug
     if (this.debugText) {
       this.debugText.destroy();
+      this.debugText = null;
     }
+    
+    if (this.debugGraphics) {
+      this.debugGraphics.destroy();
+      this.debugGraphics = null;
+    }
+  }
 
-    // Destroy layer groups
-    Object.values(this.layers).forEach((layer) => {
-      if (layer) layer.destroy(true);
-    });
+  /**
+   * Draw debug information for corridors
+   */
+  drawAllCorridorsDebug() {
+    if (!this.debug || !this.mapData) return;
+    
+    // Create debug graphics if needed
+    if (!this.corridorDebugGraphics) {
+      this.corridorDebugGraphics = this.scene.add.graphics();
+      this.corridorDebugGraphics.setDepth(1000);
+    } else {
+      this.corridorDebugGraphics.clear();
+    }
+    
+    // Get tree structure from map data
+    if (!this.mapData.tree) {
+      console.warn('No tree structure in map data for debug visualization');
+      return;
+    }
+    
+    // Draw corridors from tree structure
+    this.corridorDebugGraphics.lineStyle(2, 0x00ffff, 0.8);
+    this.drawCorridorsFromTree(this.mapData.tree);
+  }
+  
+  /**
+   * Recursively draw corridors from tree structure
+   * @param {Object} node - Tree node
+   */
+  drawCorridorsFromTree(node) {
+    if (!node) return;
+    
+    // Draw corridor in this node
+    if (node.leaf && node.leaf.corridor) {
+      const corridor = node.leaf.corridor;
+      const x = corridor.x * this.tileSize;
+      const y = corridor.y * this.tileSize;
+      const width = corridor.width * this.tileSize;
+      const height = corridor.height * this.tileSize;
+      
+      this.corridorDebugGraphics.strokeRect(x, y, width, height);
+    }
+    
+    // Recursively draw corridors in children
+    if (node.left) {
+      this.drawCorridorsFromTree(node.left);
+    }
+    
+    if (node.right) {
+      this.drawCorridorsFromTree(node.right);
+    }
   }
 }
