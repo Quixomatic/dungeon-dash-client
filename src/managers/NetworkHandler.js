@@ -83,7 +83,7 @@ export class NetworkHandler {
       this.reconciliationManager.reconcile({
         x: message.x,
         y: message.y
-      }, message.seq);
+      }, message.seq, message.collided); // Pass collision flag
     }
   }
   
