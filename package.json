@@ -8,10 +8,14 @@
         "preview": "vite preview"
     },
     "dependencies": {
+        "@babel/plugin-transform-react-jsx": "^7.27.1",
         "colyseus.js": "^0.16.16",
-        "phaser": "^3.60.0"
+        "phaser": "^3.60.0",
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0"
     },
     "devDependencies": {
+        "@vitejs/plugin-react": "^4.4.1",
         "vite": "^5.0.0"
     }
 }

@@ -1,10 +1,14 @@
-// src/main.js
+// src/main.js - Update implementation
+import React from 'react';
+import ReactDOM from 'react-dom';
 import Phaser from "phaser";
 import { LobbyScene } from "./scenes/LobbyScene.js";
 import { GameScene } from "./scenes/GameScene.js";
 import { ResultsScene } from "./scenes/ResultsScene.js";
 import gameState from "./systems/GameState.js";
 import networkManager from "./systems/NetworkManager.js";
+import { PlayerProfileManager } from "./managers/PlayerProfileManager.js";
+import './styles/auth.css'; // Import our auth styles
 
 // Initialize game state
 gameState.init({
@@ -21,6 +25,9 @@ gameState.init({
 networkManager.init({
   debug: true
 });
+
+// Initialize player profile manager
+const profileManager = new PlayerProfileManager();
 
 const config = {
   type: Phaser.AUTO,
@@ -57,6 +64,7 @@ window.addEventListener('playerCountUpdate', (event) => {
 // Make objects available for debugging in browser console
 window.gameState = gameState;
 window.networkManager = networkManager;
+window.profileManager = profileManager;
 
 // Log when game is ready
 window.addEventListener('load', () => {

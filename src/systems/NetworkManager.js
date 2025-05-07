@@ -8,6 +8,7 @@ class NetworkManager {
     this.room = null;
     this.connected = false;
     this.serverUrl = "ws://localhost:2567";
+    this.httpServerUrl = "http://localhost:2567"; // HTTP URL for auth API
     this.roomType = "normal";
     this.messageHandlers = new Map();
     this.reconnectAttempts = 0;
@@ -17,17 +18,17 @@ class NetworkManager {
     this.lastInputTime = 0;
     this.inputSendRate = 16.67; // Send inputs at ~60Hz
     this.lastInput = null;
-    
+
     // Auth state tracking
     this.isAuthenticated = false;
     this.userData = null;
-    
+
     // Input tracking for reconciliation
     this.inputSequence = 0;
     this.pendingInputs = [];
     this.lastServerState = null;
     this.lastProcessedInput = 0;
-    
+
     // Check for existing token on initialization
     this.checkExistingAuth();
   }
@@ -42,11 +43,14 @@ class NetworkManager {
       this.isAuthenticated = true;
       try {
         // Try to parse payload from token (JWT format: header.payload.signature)
-        const payload = token.split('.')[1];
+        const payload = token.split(".")[1];
         if (payload) {
           this.userData = JSON.parse(atob(payload));
           if (this.debug) {
-            console.log("Retrieved user data from stored token:", this.userData);
+            console.log(
+              "Retrieved user data from stored token:",
+              this.userData
+            );
           }
         }
       } catch (error) {
@@ -74,7 +78,9 @@ class NetworkManager {
 
     if (this.debug) {
       console.log(`NetworkManager initialized with server: ${this.serverUrl}`);
-      console.log(`Auth status: ${this.isAuthenticated ? 'Authenticated' : 'Guest'}`);
+      console.log(
+        `Auth status: ${this.isAuthenticated ? "Authenticated" : "Guest"}`
+      );
     }
 
     return this;
@@ -163,7 +169,7 @@ class NetworkManager {
    */
   async login(email, password) {
     try {
-      const response = await fetch(`${this.serverUrl}/auth/login`, {
+      const response = await fetch(`${this.httpServerUrl}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -197,16 +203,16 @@ class NetworkManager {
    */
   async register(username, email, password, options = {}) {
     try {
-      const response = await fetch(`${this.serverUrl}/auth/register`, {
+      const response = await fetch(`${this.httpServerUrl}/auth/register`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ 
-          username, 
-          email, 
+        body: JSON.stringify({
+          username,
+          email,
           password,
-          ...options
+          ...options,
         }),
       });
 
@@ -235,28 +241,30 @@ class NetworkManager {
     // Store tokens
     if (data.accessToken) {
       localStorage.setItem("auth_token", data.accessToken);
-      
+
       // Set on client for immediate use
       if (this.client) {
         this.client.auth.token = data.accessToken;
       }
     }
-    
+
     if (data.refreshToken) {
       localStorage.setItem("refresh_token", data.refreshToken);
     }
-    
+
     // Update auth state
     this.isAuthenticated = true;
     this.userData = data.user;
-    
+
     // Trigger an event others can listen to
-    window.dispatchEvent(new CustomEvent('authStatusChanged', {
-      detail: { 
-        isAuthenticated: true,
-        user: data.user
-      }
-    }));
+    window.dispatchEvent(
+      new CustomEvent("authStatusChanged", {
+        detail: {
+          isAuthenticated: true,
+          user: data.user,
+        },
+      })
+    );
   }
 
   /**
@@ -267,31 +275,33 @@ class NetworkManager {
     // Clear tokens
     localStorage.removeItem("auth_token");
     localStorage.removeItem("refresh_token");
-    
+
     this.isAuthenticated = false;
     this.userData = null;
-    
+
     // Clear client auth
     if (this.client) {
       this.client.auth.token = null;
     }
-    
+
     // Disconnect if connected
     if (this.connected) {
       this.disconnect();
     }
-    
+
     // Trigger event
-    window.dispatchEvent(new CustomEvent('authStatusChanged', {
-      detail: { 
-        isAuthenticated: false,
-        user: null
-      }
-    }));
-    
+    window.dispatchEvent(
+      new CustomEvent("authStatusChanged", {
+        detail: {
+          isAuthenticated: false,
+          user: null,
+        },
+      })
+    );
+
     // Optionally call server logout endpoint
     try {
-      await fetch(`${this.serverUrl}/auth/logout`, {
+      await fetch(`${this.httpServerUrl}/auth/logout`, {
         method: "POST",
       });
     } catch (error) {
@@ -309,33 +319,33 @@ class NetworkManager {
     if (!refreshToken) {
       return false;
     }
-    
+
     try {
-      const response = await fetch(`${this.serverUrl}/auth/refresh`, {
+      const response = await fetch(`${this.httpServerUrl}/auth/refresh`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ refreshToken }),
       });
-      
+
       if (!response.ok) {
         throw new Error("Token refresh failed");
       }
-      
+
       const data = await response.json();
-      
+
       // Update tokens
       if (data.accessToken) {
         localStorage.setItem("auth_token", data.accessToken);
-        
+
         if (this.client) {
           this.client.auth.token = data.accessToken;
         }
-        
+
         return true;
       }
-      
+
       return false;
     } catch (error) {
       console.error("Token refresh error:", error);
@@ -642,6 +652,50 @@ class NetworkManager {
     }
 
     this.connected = false;
+  }
+
+  /**
+   * Test the authentication flow
+   * @param {string} email - User's email
+   * @param {string} password - User's password
+   * @returns {Promise<void>}
+   */
+  async testAuthFlow(email, password) {
+    try {
+      console.log("Testing authentication flow...");
+
+      // 1. Try to login
+      console.log(`Attempting to login as ${email}...`);
+      const user = await this.login(email, password);
+      console.log("Login successful:", user);
+
+      // 2. Verify authenticated state
+      console.log("Checking authentication state...");
+      console.log("Is authenticated:", this.isAuthenticated);
+      console.log("User data:", this.userData);
+
+      // 3. Connect to a game room
+      console.log("Connecting to game room...");
+      const room = await this.connect();
+      console.log("Connected to room:", room.id);
+
+      // 4. Wait a moment and verify connection
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      console.log("Connection active:", this.connected);
+      console.log("Player ID:", this.getPlayerId());
+
+      return {
+        success: true,
+        user,
+        room,
+      };
+    } catch (error) {
+      console.error("Authentication test failed:", error);
+      return {
+        success: false,
+        error,
+      };
+    }
   }
 }
 
