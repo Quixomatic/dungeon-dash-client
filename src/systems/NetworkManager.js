@@ -17,12 +17,42 @@ class NetworkManager {
     this.lastInputTime = 0;
     this.inputSendRate = 16.67; // Send inputs at ~60Hz
     this.lastInput = null;
-
+    
+    // Auth state tracking
+    this.isAuthenticated = false;
+    this.userData = null;
+    
     // Input tracking for reconciliation
     this.inputSequence = 0;
     this.pendingInputs = [];
     this.lastServerState = null;
     this.lastProcessedInput = 0;
+    
+    // Check for existing token on initialization
+    this.checkExistingAuth();
+  }
+
+  /**
+   * Check for existing authentication token on startup
+   * @private
+   */
+  checkExistingAuth() {
+    const token = localStorage.getItem("auth_token");
+    if (token) {
+      this.isAuthenticated = true;
+      try {
+        // Try to parse payload from token (JWT format: header.payload.signature)
+        const payload = token.split('.')[1];
+        if (payload) {
+          this.userData = JSON.parse(atob(payload));
+          if (this.debug) {
+            console.log("Retrieved user data from stored token:", this.userData);
+          }
+        }
+      } catch (error) {
+        console.warn("Could not parse token payload:", error);
+      }
+    }
   }
 
   /**
@@ -44,6 +74,7 @@ class NetworkManager {
 
     if (this.debug) {
       console.log(`NetworkManager initialized with server: ${this.serverUrl}`);
+      console.log(`Auth status: ${this.isAuthenticated ? 'Authenticated' : 'Guest'}`);
     }
 
     return this;
@@ -60,12 +91,13 @@ class NetworkManager {
         this.client = new Client(this.serverUrl);
       }
 
-      // Check for auth token in localStorage
+      // If we have a stored token, set it on the client
       const token = localStorage.getItem("auth_token");
-
-      // Add token to options if available
       if (token) {
         this.client.auth.token = token;
+        if (this.debug) {
+          console.log("Using stored authentication token");
+        }
       }
 
       // Join or create room
@@ -89,6 +121,8 @@ class NetworkManager {
       if (error.code === 401) {
         // Clear invalid token
         localStorage.removeItem("auth_token");
+        this.isAuthenticated = false;
+        this.userData = null;
         console.log("Authentication failed, cleared token");
 
         // Attempt reconnect without auth
@@ -121,7 +155,12 @@ class NetworkManager {
     }
   }
 
-  // Add login method
+  /**
+   * Login an existing user
+   * @param {string} email - User's email address
+   * @param {string} password - User's password
+   * @returns {Promise<Object>} - User data
+   */
   async login(email, password) {
     try {
       const response = await fetch(`${this.serverUrl}/auth/login`, {
@@ -138,13 +177,8 @@ class NetworkManager {
         throw new Error(data.error || "Login failed");
       }
 
-      // Store token
-      localStorage.setItem("auth_token", data.token);
-
-      // Update client auth
-      if (this.client) {
-        this.client.auth.token = data.token;
-      }
+      // Store tokens and update state
+      this.handleAuthResponse(data);
 
       return data.user;
     } catch (error) {
@@ -153,15 +187,27 @@ class NetworkManager {
     }
   }
 
-  // Add register method
-  async register(username, email, password) {
+  /**
+   * Register a new user
+   * @param {string} username - User's desired username
+   * @param {string} email - User's email address
+   * @param {string} password - User's password
+   * @param {Object} options - Additional registration options
+   * @returns {Promise<Object>} - User data and tokens
+   */
+  async register(username, email, password, options = {}) {
     try {
       const response = await fetch(`${this.serverUrl}/auth/register`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify({ 
+          username, 
+          email, 
+          password,
+          ...options
+        }),
       });
 
       const data = await response.json();
@@ -170,13 +216,8 @@ class NetworkManager {
         throw new Error(data.error || "Registration failed");
       }
 
-      // Store token
-      localStorage.setItem("auth_token", data.token);
-
-      // Update client auth
-      if (this.client) {
-        this.client.auth.token = data.token;
-      }
+      // Store tokens and update state
+      this.handleAuthResponse(data);
 
       return data.user;
     } catch (error) {
@@ -185,17 +226,122 @@ class NetworkManager {
     }
   }
 
-  // Add logout method
-  logout() {
-    localStorage.removeItem("auth_token");
+  /**
+   * Handle auth response - store tokens and update internal state
+   * @private
+   * @param {Object} data - Response data
+   */
+  handleAuthResponse(data) {
+    // Store tokens
+    if (data.accessToken) {
+      localStorage.setItem("auth_token", data.accessToken);
+      
+      // Set on client for immediate use
+      if (this.client) {
+        this.client.auth.token = data.accessToken;
+      }
+    }
+    
+    if (data.refreshToken) {
+      localStorage.setItem("refresh_token", data.refreshToken);
+    }
+    
+    // Update auth state
+    this.isAuthenticated = true;
+    this.userData = data.user;
+    
+    // Trigger an event others can listen to
+    window.dispatchEvent(new CustomEvent('authStatusChanged', {
+      detail: { 
+        isAuthenticated: true,
+        user: data.user
+      }
+    }));
+  }
 
+  /**
+   * Log out the current user
+   * @returns {Promise<void>}
+   */
+  async logout() {
+    // Clear tokens
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("refresh_token");
+    
+    this.isAuthenticated = false;
+    this.userData = null;
+    
+    // Clear client auth
+    if (this.client) {
+      this.client.auth.token = null;
+    }
+    
     // Disconnect if connected
     if (this.connected) {
       this.disconnect();
     }
+    
+    // Trigger event
+    window.dispatchEvent(new CustomEvent('authStatusChanged', {
+      detail: { 
+        isAuthenticated: false,
+        user: null
+      }
+    }));
+    
+    // Optionally call server logout endpoint
+    try {
+      await fetch(`${this.serverUrl}/auth/logout`, {
+        method: "POST",
+      });
+    } catch (error) {
+      // Just log, don't throw - we've already cleared local state
+      console.warn("Error during server logout:", error);
+    }
+  }
 
-    if (this.client) {
-      this.client.auth.token = null;
+  /**
+   * Refresh the auth token
+   * @returns {Promise<boolean>} Success or failure
+   */
+  async refreshToken() {
+    const refreshToken = localStorage.getItem("refresh_token");
+    if (!refreshToken) {
+      return false;
+    }
+    
+    try {
+      const response = await fetch(`${this.serverUrl}/auth/refresh`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+      
+      if (!response.ok) {
+        throw new Error("Token refresh failed");
+      }
+      
+      const data = await response.json();
+      
+      // Update tokens
+      if (data.accessToken) {
+        localStorage.setItem("auth_token", data.accessToken);
+        
+        if (this.client) {
+          this.client.auth.token = data.accessToken;
+        }
+        
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error("Token refresh error:", error);
+      // On failure, log out
+      this.logout();
+      return false;
     }
   }
 
@@ -460,6 +606,22 @@ class NetworkManager {
    */
   isConnected() {
     return this.connected && this.room !== null;
+  }
+
+  /**
+   * Check if the user is authenticated
+   * @returns {boolean} - Authentication status
+   */
+  isUserAuthenticated() {
+    return this.isAuthenticated;
+  }
+
+  /**
+   * Get the current user data
+   * @returns {Object|null} - User data or null if not authenticated
+   */
+  getUserData() {
+    return this.userData;
   }
 
   /**
