@@ -10,13 +10,13 @@ class NetworkManager {
     this.serverUrl = "ws://localhost:2567";
     this.httpServerUrl = "http://localhost:2567"; // HTTP URL for auth API
     this.roomType = "normal";
+    this.debug = true;
     this.messageHandlers = new Map();
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 2000; // 2 seconds initial delay
-    this.debug = true;
+    this.reconnectDelay = 2000;
     this.lastInputTime = 0;
-    this.inputSendRate = 16.67; // Send inputs at ~60Hz
+    this.inputSendRate = 16.67;
     this.lastInput = null;
 
     // Auth state tracking
@@ -31,31 +31,165 @@ class NetworkManager {
 
     // Check for existing token on initialization
     this.checkExistingAuth();
+
+    // Set up token refresh interval
+    this.tokenRefreshInterval = setInterval(() => {
+      this.refreshTokenIfNeeded();
+    }, 60000); // Check every minute
   }
 
   /**
    * Check for existing authentication token on startup
    * @private
    */
-  checkExistingAuth() {
+  async checkExistingAuth() {
     const token = localStorage.getItem("auth_token");
-    if (token) {
-      this.isAuthenticated = true;
-      try {
-        // Try to parse payload from token (JWT format: header.payload.signature)
-        const payload = token.split(".")[1];
-        if (payload) {
-          this.userData = JSON.parse(atob(payload));
+    if (!token) return;
+
+    try {
+      // Try to parse payload from token (JWT format: header.payload.signature)
+      const payload = token.split(".")[1];
+      if (payload) {
+        const decodedPayload = JSON.parse(atob(payload));
+        const now = Date.now() / 1000;
+
+        // Check if token is expired
+        if (decodedPayload.exp && decodedPayload.exp < now) {
+          console.log("Stored token is expired, trying refresh token");
+          // Try to refresh token
+          const refreshed = await this.refreshToken();
+          if (!refreshed) {
+            // Failed to refresh, clear tokens
+            localStorage.removeItem("auth_token");
+            localStorage.removeItem("refresh_token");
+            this.isAuthenticated = false;
+            this.userData = null;
+            return;
+          }
+        } else {
+          // Token is still valid
+          this.userData = {
+            id: decodedPayload.sub,
+            username: decodedPayload.username,
+            email: decodedPayload.email,
+          };
+
+          this.isAuthenticated = true;
+
           if (this.debug) {
             console.log(
               "Retrieved user data from stored token:",
               this.userData
             );
           }
+
+          // Trigger auth status changed event
+          window.dispatchEvent(
+            new CustomEvent("authStatusChanged", {
+              detail: {
+                isAuthenticated: true,
+                user: this.userData,
+              },
+            })
+          );
         }
-      } catch (error) {
-        console.warn("Could not parse token payload:", error);
       }
+    } catch (error) {
+      console.warn("Could not parse token payload:", error);
+      // Validate token with server
+      try {
+        // Validate token
+        const response = await fetch(`${this.httpServerUrl}/auth/validate`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ token }),
+        });
+
+        if (!response.ok) {
+          // Token is invalid, remove it
+          localStorage.removeItem("auth_token");
+          localStorage.removeItem("refresh_token");
+          this.isAuthenticated = false;
+          this.userData = null;
+          return;
+        }
+
+        // Token is valid, restore auth state
+        const data = await response.json();
+
+        this.isAuthenticated = true;
+        this.userData = data.user || { userId: data.userId };
+
+        // Trigger auth status changed event
+        window.dispatchEvent(
+          new CustomEvent("authStatusChanged", {
+            detail: {
+              isAuthenticated: true,
+              user: this.userData,
+            },
+          })
+        );
+
+        console.log("Authentication restored from saved token");
+      } catch (error) {
+        console.error("Error validating saved token:", error);
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("refresh_token");
+        this.isAuthenticated = false;
+        this.userData = null;
+      }
+    }
+  }
+
+  /**
+   * Check if token needs refresh and refresh it if needed
+   * @private
+   */
+  async refreshTokenIfNeeded() {
+    if (!this.isAuthenticated) return;
+
+    const token = localStorage.getItem("auth_token");
+    if (!token) return;
+
+    // Check if token is about to expire
+    try {
+      const tokenData = this.decodeToken(token);
+      const now = Date.now() / 1000;
+
+      // If token expires in less than 5 minutes, refresh it
+      if (tokenData.exp && tokenData.exp - now < 300) {
+        await this.refreshToken();
+      }
+    } catch (error) {
+      console.error("Error checking token expiration:", error);
+    }
+  }
+
+  /**
+   * Decode a JWT token
+   * @param {string} token - JWT token to decode
+   * @returns {Object} - Decoded token payload
+   * @private
+   */
+  decodeToken(token) {
+    try {
+      const base64Url = token.split(".")[1];
+      const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+      const jsonPayload = decodeURIComponent(
+        atob(base64)
+          .split("")
+          .map((c) => {
+            return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+          })
+          .join("")
+      );
+
+      return JSON.parse(jsonPayload);
+    } catch (error) {
+      console.error("Error decoding token:", error);
+      return {};
     }
   }
 
@@ -123,13 +257,33 @@ class NetworkManager {
     } catch (error) {
       console.error("Connection error:", error);
 
-      // Special handling for auth errors
+      // Handle authentication errors
       if (error.code === 401) {
+        console.log("Authentication error:", error.message);
+
+        // Try to refresh token
+        if (await this.refreshToken()) {
+          // Token refreshed, try connecting again
+          console.log("Token refreshed, reconnecting...");
+          return this.connect(options);
+        }
+
         // Clear invalid token
         localStorage.removeItem("auth_token");
+        localStorage.removeItem("refresh_token");
         this.isAuthenticated = false;
         this.userData = null;
         console.log("Authentication failed, cleared token");
+
+        // Notify about auth change
+        window.dispatchEvent(
+          new CustomEvent("authStatusChanged", {
+            detail: {
+              isAuthenticated: false,
+              user: null,
+            },
+          })
+        );
 
         // Attempt reconnect without auth
         return this.connect(options);
@@ -238,6 +392,8 @@ class NetworkManager {
    * @param {Object} data - Response data
    */
   handleAuthResponse(data) {
+    console.log("Handling auth response:", data);
+
     // Store tokens
     if (data.accessToken) {
       localStorage.setItem("auth_token", data.accessToken);
@@ -652,6 +808,20 @@ class NetworkManager {
     }
 
     this.connected = false;
+  }
+
+  /**
+   * Cleanup when object is destroyed
+   */
+  destroy() {
+    // Clear token refresh interval
+    if (this.tokenRefreshInterval) {
+      clearInterval(this.tokenRefreshInterval);
+      this.tokenRefreshInterval = null;
+    }
+
+    // Disconnect from server
+    this.disconnect();
   }
 
   /**
