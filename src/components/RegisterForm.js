@@ -1,53 +1,56 @@
 // src/components/RegisterForm.js
-import React, { useState } from 'react';
-import networkManager from '../systems/NetworkManager.js';
+import React, { useState } from "react";
+import networkManager from "../systems/NetworkManager.js";
 
 const RegisterForm = ({ onRegisterSuccess }) => {
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  
+  const [error, setError] = useState("");
+
   const handleRegister = async (e) => {
     e.preventDefault();
-    
+
     if (!username || !email || !password) {
-      setError('Username, email, and password are required');
+      setError("Username, email, and password are required");
       return;
     }
-    
+
     setLoading(true);
-    setError('');
-    
+    setError("");
+
     try {
       const userData = await networkManager.register(
-        username, 
-        email, 
-        password, 
-        { displayName: displayName || username }
+        username,
+        email,
+        password,
+        {
+          displayName: displayName || username,
+          username,
+        }
       );
-      
-      console.log('Registration successful:', userData);
-      
+
+      console.log("Registration successful:", userData);
+
       if (onRegisterSuccess) {
         onRegisterSuccess(userData);
       }
     } catch (error) {
-      console.error('Registration failed:', error);
-      setError(error.message || 'Registration failed. Please try again.');
+      console.error("Registration failed:", error);
+      setError(error.message || "Registration failed. Please try again.");
     } finally {
       setLoading(false);
     }
   };
-  
+
   return (
     <div className="register-form">
       <h2>Create Account</h2>
-      
+
       {error && <div className="error-message">{error}</div>}
-      
+
       <form onSubmit={handleRegister}>
         <div className="form-group">
           <label htmlFor="username">Username</label>
@@ -59,7 +62,7 @@ const RegisterForm = ({ onRegisterSuccess }) => {
             disabled={loading}
           />
         </div>
-        
+
         <div className="form-group">
           <label htmlFor="email">Email</label>
           <input
@@ -70,7 +73,7 @@ const RegisterForm = ({ onRegisterSuccess }) => {
             disabled={loading}
           />
         </div>
-        
+
         <div className="form-group">
           <label htmlFor="password">Password</label>
           <input
@@ -81,7 +84,7 @@ const RegisterForm = ({ onRegisterSuccess }) => {
             disabled={loading}
           />
         </div>
-        
+
         <div className="form-group">
           <label htmlFor="displayName">Display Name (optional)</label>
           <input
@@ -92,14 +95,16 @@ const RegisterForm = ({ onRegisterSuccess }) => {
             disabled={loading}
           />
         </div>
-        
+
         <button type="submit" disabled={loading}>
-          {loading ? 'Creating Account...' : 'Register'}
+          {loading ? "Creating Account..." : "Register"}
         </button>
       </form>
-      
+
       <div className="form-footer">
-        <p>Already have an account? <a href="#login">Login</a></p>
+        <p>
+          Already have an account? <a href="#login">Login</a>
+        </p>
       </div>
     </div>
   );
