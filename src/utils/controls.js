@@ -17,9 +17,13 @@ export function createControls(scene) {
     right: scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D)
   };
   
+  // Set up dash key (spacebar)
+  const dashKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+  
   return {
     cursors,
     wasd,
+    dashKey,
     
     /**
      * Get current input state
@@ -30,7 +34,8 @@ export function createControls(scene) {
         up: cursors.up.isDown || wasd.up.isDown,
         down: cursors.down.isDown || wasd.down.isDown,
         left: cursors.left.isDown || wasd.left.isDown,
-        right: cursors.right.isDown || wasd.right.isDown
+        right: cursors.right.isDown || wasd.right.isDown,
+        dash: dashKey.isDown
       };
     },
     
@@ -64,6 +69,14 @@ export function createControls(scene) {
       }
       
       return vector;
+    },
+    
+    /**
+     * Check if dash key is pressed
+     * @returns {boolean} - True if dash key is pressed
+     */
+    isDashKeyDown() {
+      return dashKey.isDown;
     }
   };
 }
