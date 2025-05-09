@@ -1,4 +1,4 @@
-// src/managers/NetworkHandler.js
+// src/managers/NetworkHandler.js - With toggleable dash animation
 
 export class NetworkHandler {
   constructor(scene, room, playerId) {
@@ -9,12 +9,18 @@ export class NetworkHandler {
     this.inputHandler = null;
     this.reconciliationManager = null;
 
+    // Configuration options
+    this.enableDashAnimation = true; // Toggle for dash animations
+    this.dashAnimationDuration = 100; // Milliseconds, keep this short (80-120ms recommended)
+
     // Last received sequence from server
     this.lastProcessedSequence = 0;
 
     this.playerLatestPositions = new Map(); // Store the latest server position for each player
     this.playerSequenceNumbers = new Map(); // Track latest sequence number for each player
-    this.debugPositions = true; // Enable position debug logging
+    this.debugPositions = false; // Enable position debug logging
+
+    window.testNetworkHandler = this; // For debugging
 
     // Set up message handlers
     this.setupMessageHandlers();
@@ -45,6 +51,22 @@ export class NetworkHandler {
   }
 
   /**
+   * Configure animation settings
+   * @param {Object} options - Configuration options
+   */
+  configure(options = {}) {
+    if (options.enableDashAnimation !== undefined) {
+      this.enableDashAnimation = options.enableDashAnimation;
+    }
+
+    if (options.dashAnimationDuration !== undefined) {
+      this.dashAnimationDuration = options.dashAnimationDuration;
+    }
+
+    return this;
+  }
+
+  /**
    * Set up message handlers
    */
   setupMessageHandlers() {
@@ -65,18 +87,18 @@ export class NetworkHandler {
     // Handle player left
     this.room.onMessage("playerLeft", this.handlePlayerLeft.bind(this));
 
-    // NEW HANDLERS FOR DASH
-
-    // Handle player dash events from other players
+    // Dash handlers
     this.room.onMessage("playerDashed", this.handlePlayerDashed.bind(this));
-
-    // Handle dash charge restoration
     this.room.onMessage(
       "dashChargeRestored",
       this.handleDashChargeRestored.bind(this)
     );
   }
 
+  /**
+   * Handle player dash events from other players
+   * @param {Object} message - Dash event message
+   */
   handlePlayerDashed(message) {
     // Skip if it's the local player (handled by client prediction)
     if (message.id === this.playerId) return;
@@ -120,74 +142,94 @@ export class NetworkHandler {
     const otherPlayer = this.playerManager.otherPlayers[message.id];
     if (!otherPlayer) return;
 
-    // Get the starting position before updating
-    const startX = otherPlayer.x;
-    const startY = otherPlayer.y;
+    // Get the starting position
+    const startX = message.startX;
+    const startY = message.startY;
+
+    // Get the end position
+    const endX = message.endX;
+    const endY = message.endY;
 
     this.logPositionDebug(message.id, {
       type: "dash-execute",
       text: `Executing dash ${Math.round(startX)},${Math.round(
         startY
-      )} -> ${Math.round(message.endX)},${Math.round(message.endY)}`,
+      )} -> ${Math.round(endX)},${Math.round(endY)}`,
       data: {
-        currentPos: { x: startX, y: startY },
-        newPos: { x: message.endX, y: message.endY },
+        startPos: { x: startX, y: startY },
+        endPos: { x: endX, y: endY },
       },
     });
 
-    // Immediately update the player position to the correct end position
-    otherPlayer.x = message.endX;
-    otherPlayer.y = message.endY;
+    // Create visual effects to indicate dash
+    this.createDashTrail(startX, startY, endX, endY);
+
+    // Flash effects at start and end
+    this.createPositionFlash(startX, startY, 0x00ffff); // Blue flash at start
+    this.createPositionFlash(endX, endY, 0xffff00); // Yellow flash at end
+
+    // HANDLE PLAYER POSITION BASED ON ANIMATION TOGGLE
+    if (this.enableDashAnimation) {
+      // ANIMATION ENABLED:
+      // 1. First set player to start position
+      otherPlayer.x = startX;
+      otherPlayer.y = startY;
+
+      console.log(`Dash animation enabled: ${otherPlayer.x},${otherPlayer.y} -> ${endX},${endY}`);
+
+      // 2. Animate to end position with a short tween
+      this.scene.tweens.add({
+        targets: otherPlayer,
+        x: endX,
+        y: endY,
+        duration: this.dashAnimationDuration,
+        ease: "Sine.Out",
+        onUpdate: () => {
+          // Update name label position during animation
+          if (
+            this.playerManager.playerNameLabels &&
+            this.playerManager.playerNameLabels[message.id]
+          ) {
+            const nameLabel = this.playerManager.playerNameLabels[message.id];
+            nameLabel.x = otherPlayer.x;
+            nameLabel.y = otherPlayer.y - 40;
+          }
+        },
+      });
+    } else {
+      // ANIMATION DISABLED - INSTANT POSITION UPDATE:
+      // Just set to final position immediately
+      otherPlayer.x = endX;
+      otherPlayer.y = endY;
+
+      // Update name label position
+      if (
+        this.playerManager.playerNameLabels &&
+        this.playerManager.playerNameLabels[message.id]
+      ) {
+        const nameLabel = this.playerManager.playerNameLabels[message.id];
+        nameLabel.x = endX;
+        nameLabel.y = endY - 40;
+      }
+    }
+
+    // In both cases, update target position for interpolation system
+    otherPlayer.targetX = endX;
+    otherPlayer.targetY = endY;
 
     // Save the position and sequence as player properties for debugging
-    otherPlayer._lastPositionX = message.endX;
-    otherPlayer._lastPositionY = message.endY;
+    otherPlayer._lastPositionX = endX;
+    otherPlayer._lastPositionY = endY;
     otherPlayer._lastPositionSeq = message.seq;
     otherPlayer._lastPositionType = "dash";
 
-    // Also update name label if it exists
-    if (
-      this.playerManager.playerNameLabels &&
-      this.playerManager.playerNameLabels[message.id]
-    ) {
-      const nameLabel = this.playerManager.playerNameLabels[message.id];
-      nameLabel.x = message.endX;
-      nameLabel.y = message.endY - 40;
-    }
-
     // Add timestamp to record when this position was updated
     otherPlayer._lastPositionUpdate = Date.now();
-
-    // Create visual effects to indicate dash
-    this.createDashEffects(
-      startX,
-      startY,
-      message.endX,
-      message.endY,
-      message.direction
-    );
 
     // Add wall impact effect if they hit a wall
     if (message.hitWall) {
       this.playOtherPlayerWallImpact(message.id);
     }
-  }
-
-  /**
-   * Create visual effects for a dash without animating the player position
-   * @param {number} startX - Start X position
-   * @param {number} startY - Start Y position
-   * @param {number} endX - End X position
-   * @param {number} endY - End Y position
-   * @param {Object} direction - Direction vector
-   */
-  createDashEffects(startX, startY, endX, endY, direction) {
-    // 1. Create a dash trail (line of fading sprites or particles)
-    this.createDashTrail(startX, startY, endX, endY);
-
-    // 2. Flash at start and end positions
-    this.createPositionFlash(startX, startY, 0x00ffff); // Blue flash at start
-    this.createPositionFlash(endX, endY, 0xffff00); // Yellow flash at end
   }
 
   /**
@@ -231,30 +273,6 @@ export class NetworkHandler {
     });
 
     // Could add particles here too
-  }
-
-  /**
-   * Play dash effect for other players
-   * @param {string} playerId - Player ID
-   * @param {Object} direction - Dash direction
-   */
-  playOtherPlayerDashEffect(playerId, direction) {
-    // Find other player sprite
-    if (!this.playerManager || !this.playerManager.otherPlayers) return;
-
-    const otherPlayer = this.playerManager.otherPlayers[playerId];
-    if (!otherPlayer) return;
-
-    // Create a trail effect
-    this.createDashTrail(otherPlayer, direction);
-
-    // Flash the player briefly
-    this.scene.tweens.add({
-      targets: otherPlayer,
-      alpha: 0.7,
-      duration: 50,
-      yoyo: true,
-    });
   }
 
   /**
@@ -330,8 +348,6 @@ export class NetworkHandler {
    * @param {Object} message - Input acknowledgement message
    */
   handleInputAck(message) {
-    //console.log(`Input acknowledged: seq=${message.seq}, position=(${message.x}, ${message.y})`);
-
     // Update last processed sequence
     this.lastProcessedSequence = message.seq;
 
@@ -349,7 +365,7 @@ export class NetworkHandler {
         },
         message.seq,
         message.collided
-      ); // Pass collision flag
+      );
     }
   }
 
@@ -495,8 +511,6 @@ export class NetworkHandler {
     // Skip if it's the local player
     if (message.id === this.playerId) return;
 
-    //console.log(`Player joined: ${message.id} (${message.name})`);
-
     // Create other player
     if (this.playerManager) {
       const x = message.position ? message.position.x : 400;
@@ -547,8 +561,6 @@ export class NetworkHandler {
         inputs: inputs,
         timestamp: Date.now(),
       });
-
-      //console.log(`Sent input batch with ${inputs.length} inputs, sequences: ${inputs.map(input => input.seq).join(', ')}`);
     } catch (error) {
       console.error("Error sending input batch to server:", error);
     }
