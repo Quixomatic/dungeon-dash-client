@@ -27,7 +27,7 @@ export class DungeonRenderer {
     this.minimapContainer = null;
     this.minimapGraphics = null;
     this.playerMarker = null;
-    this.minimapSize = 200; // Size of minimap in pixels
+    this.minimapSize = 400; // Size of minimap in pixels
     this.minimapScale = 0.01; // Scale factor for minimap
 
     // Map data storage
