@@ -1,8 +1,8 @@
-// src/managers/DungeonRenderer.js - New implementation
+// src/managers/DungeonRenderer.js - Updated to use sprite assets
 import Phaser from "phaser";
 
 /**
- * DungeonRenderer - Efficiently renders tile-based dungeons
+ * DungeonRenderer - Efficiently renders tile-based dungeons using sprite assets
  */
 export class DungeonRenderer {
   constructor(scene) {
@@ -35,9 +35,74 @@ export class DungeonRenderer {
     this.dungeonWidth = 0;
     this.dungeonHeight = 0;
 
-    // In the DungeonRenderer constructor:
+    // Define tile textures mapping - this connects tile values to asset paths
+    this.tileTextures = {
+      // Basic types
+      "-2": "assets/tiles/hole.png",     // Deep hole
+      "-1": "assets/tiles/edge.png",     // Edge
+      0: "assets/tiles/ground.png",      // Floor
 
-    // Create a more comprehensive tile definitions mapping
+      // Wall configurations - the values match your dungeonGenerator's wall calculations
+      1: "assets/tiles/s.png",           // Simple walls, orientations
+      2: "assets/tiles/s.png", 
+      3: "assets/tiles/s.png",
+      4: "assets/tiles/s.png",
+      5: "assets/tiles/s.png",
+      6: "assets/tiles/s.png", 
+      7: "assets/tiles/s.png",
+      8: "assets/tiles/s.png",
+      9: "assets/tiles/s.png",
+      10: "assets/tiles/s.png",
+      11: "assets/tiles/s.png",
+      12: "assets/tiles/s.png",
+      
+      // Horizontal walls
+      13: "assets/tiles/w-e.png",
+      14: "assets/tiles/w-e.png",
+      15: "assets/tiles/w-e.png",
+      16: "assets/tiles/w-e.png",
+      17: "assets/tiles/w-e.png",
+      18: "assets/tiles/w-e.png",
+      19: "assets/tiles/w-e.png",
+      20: "assets/tiles/w-e.png",
+      21: "assets/tiles/w-e.png",
+      22: "assets/tiles/w-e.png",
+      23: "assets/tiles/w-e.png",
+      24: "assets/tiles/w-e.png",
+      25: "assets/tiles/w-e.png",
+      
+      // East corner walls
+      26: "assets/tiles/n-ne-e.png",
+      27: "assets/tiles/n-ne-e.png",
+      28: "assets/tiles/e.png",
+      29: "assets/tiles/n-ne-e.png",
+      30: "assets/tiles/n-ne-e.png",
+      31: "assets/tiles/e.png",
+      32: "assets/tiles/n-ne-e.png",
+      33: "assets/tiles/e.png",
+      
+      // West corner walls
+      34: "assets/tiles/n-nw-w.png",
+      35: "assets/tiles/n-nw-w.png",
+      36: "assets/tiles/w.png",
+      37: "assets/tiles/n-nw-w.png",
+      38: "assets/tiles/n-nw-w.png",
+      39: "assets/tiles/n-nw-w.png",
+      40: "assets/tiles/w.png",
+      41: "assets/tiles/w.png",
+      
+      // North walls and corners
+      42: "assets/tiles/n.png",
+      43: "assets/tiles/n.png",
+      44: "assets/tiles/ne.png",
+      45: "assets/tiles/nw.png",
+      
+      // Special cases
+      46: "assets/tiles/all.png",        // Full solid wall
+      47: "assets/tiles/s.png"           // Isolated wall
+    };
+
+    // Create a more comprehensive tile definitions mapping (as fallbacks)
     this.tileDefinitions = {
       // Base types
       "-1": { type: "hole", color: 0x111111 }, // Hole/pit
@@ -66,18 +131,15 @@ export class DungeonRenderer {
       20: { type: "wall", subtype: "north-east-south-ne", color: 0x775555 }, // N-E-S-NE complex
       21: { type: "wall", subtype: "west-east-south", color: 0x775555 }, // West-East-South T-junction
       22: { type: "wall", subtype: "north-west-east-south", color: 0x775555 }, // Cross-junction
-      // ... and so on for other wall combinations
-
-      // Add all remaining wall types with the same pattern
-      // For walls with 4 or more connections, use a darker, sturdier look
+      
+      // Complex walls
       29: { type: "wall", subtype: "complex", color: 0x555555 },
       30: { type: "wall", subtype: "complex", color: 0x555555 },
       31: { type: "wall", subtype: "complex", color: 0x555555 },
       32: { type: "wall", subtype: "complex", color: 0x555555 },
       33: { type: "wall", subtype: "complex", color: 0x555555 },
-      // ... and so on
 
-      // Special wall types (for completeness)
+      // Special wall types
       46: { type: "wall", subtype: "full", color: 0x444444 },
       47: { type: "wall", subtype: "isolated", color: 0x666666 },
     };
@@ -115,6 +177,23 @@ export class DungeonRenderer {
   }
 
   /**
+   * Preload all tile textures
+   */
+  preloadTileAssets() {
+    // This method needs to be called during the scene's preload phase
+    Object.entries(this.tileTextures).forEach(([tileValue, assetPath]) => {
+      const key = `tile_${tileValue}`;
+      if (!this.scene.textures.exists(key)) {
+        this.scene.load.image(key, assetPath);
+      }
+    });
+
+    // Also load prop textures if needed
+    this.scene.load.image('torch', 'assets/props/torch.png');
+    this.scene.load.image('chest', 'assets/props/chest.png');
+  }
+
+  /**
    * Initialize the renderer
    * @param {Object} options - Initialization options
    */
@@ -123,9 +202,6 @@ export class DungeonRenderer {
 
     // Create minimap
     this.createMinimap();
-
-    // Generate wall textures
-    this.generateWallTextures();
 
     // Create debug text if needed
     if (this.debug) {
@@ -317,8 +393,8 @@ export class DungeonRenderer {
       this.minimapGraphics.fillStyle(0x8800ff, 1);
 
       this.mapData.spawnPoints.forEach((spawn) => {
-        const miniX = offsetX + spawn.x * this.minimapScale * this.tileSize;
-        const miniY = offsetY + spawn.y * this.minimapScale * this.tileSize;
+        const miniX = offsetX + spawn.x * this.minimapScale;
+        const miniY = offsetY + spawn.y * this.minimapScale;
 
         this.minimapGraphics.fillCircle(miniX, miniY, 3);
       });
@@ -469,85 +545,8 @@ export class DungeonRenderer {
    * @param {number} tileValue - Tile value from the map data
    */
   createTile(x, y, tileValue) {
-    // Skip empty tiles (value 0 is usually empty/air)
-    if (tileValue === 0) return;
-
-    // Get tile definition - use default if not found
-    const tileDef =
-      this.tileDefinitions[tileValue] || this.defaultTileDefinition;
-
-    // Determine which texture to use based on tile type and value
-    let textureName;
-
-    if (tileValue < 0) {
-      // Hole
-      textureName = "hole";
-    } else if (tileValue === 1) {
-      // Simple north wall
-      textureName = "wall_end_north";
-    } else if (tileValue === 2) {
-      // Simple west wall
-      textureName = "wall_end_west";
-    } else if (tileValue === 5) {
-      // Simple east wall
-      textureName = "wall_end_east";
-    } else if (tileValue === 13) {
-      // Simple south wall
-      textureName = "wall_end_south";
-    } else if (tileValue === 8) {
-      // Horizontal wall
-      textureName = "wall_horizontal";
-    } else if (tileValue === 14) {
-      // Vertical wall
-      textureName = "wall_vertical";
-    } else if (tileValue === 3) {
-      // Northwest corner
-      textureName = "wall_northwest";
-    } else if (tileValue === 6) {
-      // Northeast corner
-      textureName = "wall_northeast";
-    } else if (tileValue === 15) {
-      // Southwest corner
-      textureName = "wall_southwest";
-    } else if (tileValue === 18) {
-      // Southeast corner
-      textureName = "wall_southeast";
-    } else if (tileValue === 16) {
-      // North-West-South T-junction
-      textureName = "wall_t_west";
-    } else if (tileValue === 19) {
-      // North-East-South T-junction
-      textureName = "wall_t_east";
-    } else if (tileValue === 9) {
-      // North-West-East T-junction
-      textureName = "wall_t_north";
-    } else if (tileValue === 21) {
-      // West-East-South T-junction
-      textureName = "wall_t_south";
-    } else if (tileValue === 22) {
-      // Cross junction
-      textureName = "wall_cross";
-    } else if (
-      tileValue === 4 ||
-      tileValue === 7 ||
-      tileValue === 11 ||
-      tileValue === 12
-    ) {
-      // Inner corners
-      textureName = "wall_inner_northwest";
-    } else if (tileValue === 46) {
-      // Full wall
-      textureName = "wall_full";
-    } else if (tileValue === 47) {
-      // Isolated wall
-      textureName = "wall_isolated";
-    } else if (tileValue > 22) {
-      // Complex walls
-      textureName = "wall_complex";
-    } else {
-      // Default wall
-      textureName = "wall_base";
-    }
+    // Skip undefined tiles
+    if (tileValue === undefined) return;
 
     // Create world position in pixels
     const worldX = x * this.tileSize + this.tileSize / 2;
@@ -555,21 +554,20 @@ export class DungeonRenderer {
 
     // Create or reuse the tile
     let tile;
+    const textureKey = `tile_${tileValue}`;
 
     // Try to reuse from object pool
-    if (
-      this.objectPools[textureName] &&
-      this.objectPools[textureName].length > 0
-    ) {
-      tile = this.objectPools[textureName].pop();
+    if (this.objectPools[textureKey] && this.objectPools[textureKey].length > 0) {
+      tile = this.objectPools[textureKey].pop();
       tile.setPosition(worldX, worldY);
       tile.setVisible(true);
-    } else if (this.scene.textures.exists(textureName)) {
-      // Create new textured tile
-      tile = this.scene.add.image(worldX, worldY, textureName);
+    } else if (this.scene.textures.exists(textureKey)) {
+      // Create new textured tile using loaded asset
+      tile = this.scene.add.image(worldX, worldY, textureKey);
       tile.setDisplaySize(this.tileSize, this.tileSize);
     } else {
-      // Fallback to colored rectangle
+      // Fallback to colored rectangle if texture isn't loaded
+      const tileDef = this.tileDefinitions[tileValue] || this.defaultTileDefinition;
       tile = this.scene.add.rectangle(
         worldX,
         worldY,
@@ -580,11 +578,10 @@ export class DungeonRenderer {
     }
 
     // Store the tile properties for recycling
-    tile.tileType = tileDef.type;
-    tile.tileSubtype = tileDef.subtype;
-    tile.tileTexture = textureName;
+    tile.tileValue = tileValue;
+    tile.tileTexture = textureKey;
 
-    // Add to appropriate layer
+    // Add to tiles layer
     this.layers.tiles.add(tile);
 
     // Store in visible tiles map
@@ -704,8 +701,14 @@ export class DungeonRenderer {
 
     switch (propDef.type) {
       case "torch":
-        // Create torch with light effect
-        prop = this.scene.add.circle(x, y, this.tileSize / 4, propDef.color);
+        // Check if we have a torch texture
+        if (this.scene.textures.exists('torch')) {
+          prop = this.scene.add.image(x, y, 'torch');
+          prop.setDisplaySize(this.tileSize * 0.8, this.tileSize * 0.8);
+        } else {
+          // Fallback to circle
+          prop = this.scene.add.circle(x, y, this.tileSize / 4, propDef.color);
+        }
 
         // Add light effect if enabled
         if (propDef.light) {
@@ -733,14 +736,20 @@ export class DungeonRenderer {
         break;
 
       case "chest":
-        // Create chest as rectangle
-        prop = this.scene.add.rectangle(
-          x,
-          y,
-          this.tileSize * 0.7,
-          this.tileSize * 0.5,
-          propDef.color
-        );
+        // Check if we have a chest texture
+        if (this.scene.textures.exists('chest')) {
+          prop = this.scene.add.image(x, y, 'chest');
+          prop.setDisplaySize(this.tileSize * 0.7, this.tileSize * 0.5);
+        } else {
+          // Fallback to rectangle
+          prop = this.scene.add.rectangle(
+            x,
+            y,
+            this.tileSize * 0.7,
+            this.tileSize * 0.5,
+            propDef.color
+          );
+        }
         break;
 
       default:
@@ -766,32 +775,56 @@ export class DungeonRenderer {
    * @param {Object} propDef - New prop definition
    */
   updatePropAppearance(prop, propDef) {
-    // Update color
-    prop.setFillStyle(propDef.color);
-
     // Update type
     prop.type = propDef.type;
 
-    // Update size based on type
-    switch (propDef.type) {
-      case "torch":
-        if (prop.geom && prop.geom.radius) {
-          prop.geom.radius = this.tileSize / 4;
+    // Check if we're dealing with an image or geometry
+    if (prop.setTexture) {
+      // It's an image - update texture based on type
+      switch (propDef.type) {
+        case "torch":
+          if (this.scene.textures.exists('torch')) {
+            prop.setTexture('torch');
+            prop.setDisplaySize(this.tileSize * 0.8, this.tileSize * 0.8);
+          }
+          break;
+        case "chest":
+          if (this.scene.textures.exists('chest')) {
+            prop.setTexture('chest');
+            prop.setDisplaySize(this.tileSize * 0.7, this.tileSize * 0.5);
+          }
+          break;
+        default:
+          // For other types, we might need to fallback to a generic texture
+          break;
+      }
+    } else {
+      // It's a geometry - update fill style and dimensions
+      if (prop.setFillStyle) {
+        prop.setFillStyle(propDef.color);
+      }
+      
+      // Update size based on type if it's a rectangle
+      if (prop.geom) {
+        switch (propDef.type) {
+          case "torch":
+            if (prop.geom && prop.geom.radius) {
+              prop.geom.radius = this.tileSize / 4;
+            }
+            break;
+          case "chest":
+            if (prop.geom) {
+              prop.geom.width = this.tileSize * 0.7;
+              prop.geom.height = this.tileSize * 0.5;
+            }
+            break;
+          default:
+            if (prop.geom) {
+              prop.geom.width = this.tileSize * 0.5;
+              prop.geom.height = this.tileSize * 0.5;
+            }
         }
-        break;
-
-      case "chest":
-        if (prop.geom) {
-          prop.geom.width = this.tileSize * 0.7;
-          prop.geom.height = this.tileSize * 0.5;
-        }
-        break;
-
-      default:
-        if (prop.geom) {
-          prop.geom.width = this.tileSize * 0.5;
-          prop.geom.height = this.tileSize * 0.5;
-        }
+      }
     }
 
     // Add light effect for torches if missing
@@ -861,445 +894,6 @@ export class DungeonRenderer {
     } else if (id.startsWith("monster_")) {
       this.objectPools.monster.push(object);
     }
-  }
-
-  generateWallTextures() {
-    // Generate base wall texture
-    if (!this.scene.textures.exists("wall_base")) {
-      const baseWall = this.scene.textures.createCanvas("wall_base", 64, 64);
-      const ctx = baseWall.getContext();
-
-      // Base fill
-      ctx.fillStyle = "#666666";
-      ctx.fillRect(0, 0, 64, 64);
-
-      // Add some texture
-      ctx.fillStyle = "#777777";
-      for (let i = 0; i < 10; i++) {
-        const x = Math.random() * 64;
-        const y = Math.random() * 64;
-        const size = 3 + Math.random() * 6;
-        ctx.fillRect(x, y, size, size);
-      }
-
-      // Add border
-      ctx.strokeStyle = "#555555";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(2, 2, 60, 60);
-
-      baseWall.refresh();
-    }
-
-    // Generate specific wall types
-
-    // 1. Straight walls (horizontal and vertical)
-    this.generateStraightWall("horizontal", 0); // East-West
-    this.generateStraightWall("vertical", 90); // North-South
-
-    // 2. Corner walls
-    this.generateCornerWall("northwest", 0); // Northwest corner
-    this.generateCornerWall("northeast", 90); // Northeast corner
-    this.generateCornerWall("southwest", 270); // Southwest corner
-    this.generateCornerWall("southeast", 180); // Southeast corner
-
-    // 3. T-junction walls
-    this.generateTJunctionWall("north", 0); // North T-junction
-    this.generateTJunctionWall("east", 90); // East T-junction
-    this.generateTJunctionWall("south", 180); // South T-junction
-    this.generateTJunctionWall("west", 270); // West T-junction
-
-    // 4. End walls (single connection)
-    this.generateEndWall("north", 0);
-    this.generateEndWall("east", 90);
-    this.generateEndWall("south", 180);
-    this.generateEndWall("west", 270);
-
-    // 5. Cross junction (all four connections)
-    this.generateCrossJunctionWall();
-
-    // 6. Inner corner walls
-    this.generateInnerCornerWall("northwest", 0);
-    this.generateInnerCornerWall("northeast", 90);
-    this.generateInnerCornerWall("southwest", 270);
-    this.generateInnerCornerWall("southeast", 180);
-
-    // 7. Complex walls
-    this.generateComplexWall();
-
-    // 8. Isolated wall
-    this.generateIsolatedWall();
-
-    // 9. Full wall
-    this.generateFullWall();
-
-    // 10. Generate hole texture
-    this.generateHoleTexture();
-  }
-
-  // Helper methods for wall texture generation
-
-  generateStraightWall(type, rotation) {
-    const textureName = `wall_${type}`;
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Set origin to center for rotation
-    ctx.translate(32, 32);
-    ctx.rotate((rotation * Math.PI) / 180);
-    ctx.translate(-32, -32);
-
-    // Base fill
-    ctx.fillStyle = "#666666";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Wall pattern
-    ctx.fillStyle = "#777777";
-
-    if (type === "horizontal") {
-      // Horizontal wall pattern
-      for (let x = 4; x < 60; x += 16) {
-        ctx.fillRect(x, 20, 12, 24);
-      }
-    } else {
-      // Vertical wall pattern
-      for (let y = 4; y < 60; y += 16) {
-        ctx.fillRect(20, y, 24, 12);
-      }
-    }
-
-    // Border
-    ctx.strokeStyle = "#555555";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, 60, 60);
-
-    wall.refresh();
-  }
-
-  generateCornerWall(type, rotation) {
-    const textureName = `wall_${type}`;
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Set origin to center for rotation
-    ctx.translate(32, 32);
-    ctx.rotate((rotation * Math.PI) / 180);
-    ctx.translate(-32, -32);
-
-    // Base fill
-    ctx.fillStyle = "#775555";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Corner wall pattern
-    ctx.fillStyle = "#886666";
-    ctx.beginPath();
-    ctx.moveTo(2, 2);
-    ctx.lineTo(62, 2);
-    ctx.lineTo(62, 62);
-    ctx.lineTo(32, 62);
-    ctx.lineTo(32, 32);
-    ctx.lineTo(2, 32);
-    ctx.closePath();
-    ctx.fill();
-
-    // Add stone details
-    ctx.fillStyle = "#997777";
-    ctx.fillRect(16, 8, 16, 16);
-    ctx.fillRect(40, 8, 16, 16);
-    ctx.fillRect(40, 40, 16, 16);
-
-    // Border
-    ctx.strokeStyle = "#664444";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, 60, 60);
-
-    wall.refresh();
-  }
-
-  generateTJunctionWall(type, rotation) {
-    const textureName = `wall_t_${type}`;
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Set origin to center for rotation
-    ctx.translate(32, 32);
-    ctx.rotate((rotation * Math.PI) / 180);
-    ctx.translate(-32, -32);
-
-    // Base fill
-    ctx.fillStyle = "#775555";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // T-junction pattern
-    ctx.fillStyle = "#886666";
-    ctx.fillRect(2, 2, 60, 30);
-    ctx.fillRect(17, 32, 30, 30);
-
-    // Stone details
-    ctx.fillStyle = "#997777";
-    for (let i = 0; i < 3; i++) {
-      ctx.fillRect(8 + i * 20, 8, 16, 16);
-    }
-    ctx.fillRect(24, 38, 16, 16);
-
-    // Border
-    ctx.strokeStyle = "#664444";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, 60, 60);
-
-    wall.refresh();
-  }
-
-  generateEndWall(type, rotation) {
-    const textureName = `wall_end_${type}`;
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Set origin to center for rotation
-    ctx.translate(32, 32);
-    ctx.rotate((rotation * Math.PI) / 180);
-    ctx.translate(-32, -32);
-
-    // Base fill
-    ctx.fillStyle = "#666666";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // End wall pattern
-    ctx.fillStyle = "#777777";
-    ctx.fillRect(2, 2, 60, 30);
-
-    // Add a rounded end
-    ctx.fillStyle = "#777777";
-    ctx.beginPath();
-    ctx.arc(32, 32, 30, 0, Math.PI, true);
-    ctx.fill();
-
-    // Stone details
-    ctx.fillStyle = "#888888";
-    ctx.fillRect(16, 8, 12, 12);
-    ctx.fillRect(36, 8, 12, 12);
-    ctx.fillRect(24, 20, 16, 8);
-
-    // Border
-    ctx.strokeStyle = "#555555";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, 60, 30);
-    ctx.beginPath();
-    ctx.arc(32, 32, 30, 0, Math.PI, true);
-    ctx.stroke();
-
-    wall.refresh();
-  }
-
-  generateCrossJunctionWall() {
-    const textureName = "wall_cross";
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Base fill
-    ctx.fillStyle = "#775555";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Cross pattern
-    ctx.fillStyle = "#886666";
-    ctx.fillRect(2, 17, 60, 30);
-    ctx.fillRect(17, 2, 30, 60);
-
-    // Center stone
-    ctx.fillStyle = "#997777";
-    ctx.fillRect(17, 17, 30, 30);
-
-    // Border
-    ctx.strokeStyle = "#664444";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, 60, 60);
-
-    wall.refresh();
-  }
-
-  generateInnerCornerWall(type, rotation) {
-    const textureName = `wall_inner_${type}`;
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Set origin to center for rotation
-    ctx.translate(32, 32);
-    ctx.rotate((rotation * Math.PI) / 180);
-    ctx.translate(-32, -32);
-
-    // Base fill
-    ctx.fillStyle = "#775555";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Inner corner pattern
-    ctx.fillStyle = "#886666";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Carve out inner corner
-    ctx.fillStyle = "#775555";
-    ctx.beginPath();
-    ctx.moveTo(32, 32);
-    ctx.lineTo(64, 32);
-    ctx.lineTo(64, 64);
-    ctx.lineTo(32, 64);
-    ctx.closePath();
-    ctx.fill();
-
-    // Stone details
-    ctx.fillStyle = "#997777";
-    ctx.fillRect(8, 8, 16, 16);
-    ctx.fillRect(40, 8, 16, 16);
-    ctx.fillRect(8, 40, 16, 16);
-
-    // Border
-    ctx.strokeStyle = "#664444";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, 60, 60);
-
-    wall.refresh();
-  }
-
-  generateComplexWall() {
-    const textureName = "wall_complex";
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Base fill
-    ctx.fillStyle = "#555555";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Complex pattern - multiple layers of stones
-    ctx.fillStyle = "#666666";
-
-    // Layer 1 - large stones
-    for (let row = 0; row < 4; row++) {
-      for (let col = 0; col < 4; col++) {
-        const offsetX = (row % 2) * 8;
-        ctx.fillRect(offsetX + col * 16, row * 16, 14, 14);
-      }
-    }
-
-    // Layer 2 - highlights
-    ctx.fillStyle = "#777777";
-    for (let i = 0; i < 8; i++) {
-      const x = 4 + Math.random() * 56;
-      const y = 4 + Math.random() * 56;
-      const size = 2 + Math.random() * 4;
-      ctx.fillRect(x, y, size, size);
-    }
-
-    // Border
-    ctx.strokeStyle = "#444444";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(2, 2, 60, 60);
-
-    wall.refresh();
-  }
-
-  generateIsolatedWall() {
-    const textureName = "wall_isolated";
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Base fill
-    ctx.fillStyle = "#666666";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Isolated wall pattern - a round boulder/pillar
-    ctx.fillStyle = "#777777";
-    ctx.beginPath();
-    ctx.arc(32, 32, 25, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Add some highlight
-    ctx.fillStyle = "#888888";
-    ctx.beginPath();
-    ctx.arc(28, 28, 10, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Border
-    ctx.strokeStyle = "#555555";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(32, 32, 25, 0, Math.PI * 2);
-    ctx.stroke();
-
-    wall.refresh();
-  }
-
-  generateFullWall() {
-    const textureName = "wall_full";
-    if (this.scene.textures.exists(textureName)) return;
-
-    const wall = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = wall.getContext();
-
-    // Base fill
-    ctx.fillStyle = "#444444";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Full wall pattern - solid stone blocks
-    for (let row = 0; row < 4; row++) {
-      for (let col = 0; col < 4; col++) {
-        // Alternate pattern for stone blocks
-        const offsetX = (row % 2) * 8;
-        ctx.fillStyle = (row + col) % 2 === 0 ? "#555555" : "#333333";
-        ctx.fillRect(offsetX + col * 16, row * 16, 16, 16);
-      }
-    }
-
-    // Border
-    ctx.strokeStyle = "#222222";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(2, 2, 60, 60);
-
-    wall.refresh();
-  }
-
-  generateHoleTexture() {
-    const textureName = "hole";
-    if (this.scene.textures.exists(textureName)) return;
-
-    const hole = this.scene.textures.createCanvas(textureName, 64, 64);
-    const ctx = hole.getContext();
-
-    // Base fill - dark color
-    ctx.fillStyle = "#111111";
-    ctx.fillRect(0, 0, 64, 64);
-
-    // Create a dark gradient for depth effect
-    const gradient = ctx.createRadialGradient(32, 32, 5, 32, 32, 32);
-    gradient.addColorStop(0, "#000000");
-    gradient.addColorStop(1, "#222222");
-
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(32, 32, 30, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Add rim
-    ctx.strokeStyle = "#333333";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(32, 32, 30, 0, Math.PI * 2);
-    ctx.stroke();
-
-    hole.refresh();
   }
 
   /**
