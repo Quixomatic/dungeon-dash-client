@@ -1,14 +1,14 @@
-// src/dungeonRenderer/renderers/StructureRenderer.js
+// src/dungeonRenderer/renderers/StructureRenderer.js - Corrected tile rendering
 /**
  * StructureRenderer - Handles rendering of dungeon rooms and corridors
- * Uses render textures for efficient rendering of large structures
+ * Uses sprite batching for cross-platform compatibility
  */
 export class StructureRenderer {
   constructor(scene, textureCache) {
     this.scene = scene;
     this.textureCache = textureCache;
     this.container = scene.add.container();
-    this.structureTextures = {};
+    this.structures = {}; // Map of structure ID to structure object
     this.visibleStructures = new Set();
     this.previouslyVisibleStructures = new Set();
     this.tileSize = 64;
@@ -67,6 +67,10 @@ export class StructureRenderer {
 
     // Initial visibility check
     this.previouslyVisibleStructures.clear();
+
+    if (this.debug) {
+      console.log(`Rendered ${Object.keys(this.structures).length} structures`);
+    }
   }
 
   /**
@@ -82,7 +86,7 @@ export class StructureRenderer {
     }`;
 
     // Skip if already rendered
-    if (this.structureTextures[structureId]) return;
+    if (this.structures[structureId]) return;
 
     // Calculate expanded bounds with buffer
     const bounds = this.getExpandedBounds(structure);
@@ -94,24 +98,20 @@ export class StructureRenderer {
       mapData.dungeonTileHeight
     );
 
-    // Create render texture for this structure
-    const renderTexture = this.scene.add
-      .renderTexture(
-        bounds.x * this.tileSize,
-        bounds.y * this.tileSize,
-        bounds.width * this.tileSize,
-        bounds.height * this.tileSize
-      )
-      .setDepth(10)
-      .setName(structureId)
-      .setOrigin(0);
+    // Create a container for this structure
+    const structureContainer = this.scene.add.container(
+      bounds.x * this.tileSize,
+      bounds.y * this.tileSize
+    );
+    structureContainer.setName(structureId);
+    structureContainer.setDepth(10);
 
     // Draw all tiles for this structure
-    this.drawTilesToTexture(mapData, renderTexture, bounds);
+    this.drawTilesToContainer(mapData, structureContainer, bounds);
 
-    // Store texture for reuse
-    this.structureTextures[structureId] = {
-      texture: renderTexture,
+    // Store structure for reuse
+    this.structures[structureId] = {
+      container: structureContainer,
       bounds: bounds,
       type: type,
       originalStructure: structure,
@@ -119,10 +119,10 @@ export class StructureRenderer {
     };
 
     // Initially hidden until we update visibility
-    renderTexture.setVisible(false);
+    structureContainer.setVisible(false);
 
     // Add to structures container
-    this.container.add(renderTexture);
+    this.container.add(structureContainer);
 
     if (this.debug) {
       console.log(
@@ -132,16 +132,27 @@ export class StructureRenderer {
   }
 
   /**
-   * Draw tiles to a render texture - USES EXACT TILE VALUES FOR CORRECT PNG SELECTION
+   * Draw tiles to a container - FIXED TILE ACCESS
    * @param {Object} mapData - Map data from server
-   * @param {Phaser.GameObjects.RenderTexture} renderTexture - Texture to draw to
+   * @param {Phaser.GameObjects.Container} container - Container to add sprites to
    * @param {Object} bounds - Bounds to draw (in tile coordinates)
    */
-  drawTilesToTexture(mapData, renderTexture, bounds) {
-    // Clear the texture first
-    renderTexture.clear();
+  drawTilesToContainer(mapData, container, bounds) {
+    // Draw debug outline if in debug mode
+    if (this.debug) {
+      const outline = this.scene.add.rectangle(
+        0,
+        0,
+        bounds.width * this.tileSize,
+        bounds.height * this.tileSize,
+        0x00ff00,
+        0.1
+      );
+      outline.setOrigin(0, 0);
+      container.add(outline);
+    }
 
-    // Draw each tile in the bounds with its EXACT texture based on tile value
+    // Create sprites for each tile in the bounds
     for (let y = 0; y < bounds.height; y++) {
       for (let x = 0; x < bounds.width; x++) {
         const worldX = bounds.x + x;
@@ -159,17 +170,58 @@ export class StructureRenderer {
           mapData.layers.tiles[worldY] &&
           worldX < mapData.layers.tiles[worldY].length
         ) {
+          // CRITICAL FIX: Use worldX, not x
           tileValue = mapData.layers.tiles[worldY][worldX];
         }
 
-        // Get the appropriate texture for this tile based on its specific value
-        const tileTexture = this.textureCache.getTileTexture(
-          tileValue,
-          this.tileSize
-        );
+        // Skip if tile is empty (shouldn't happen with default value)
+        if (tileValue === undefined) continue;
 
-        // Draw tile texture to the render texture
-        renderTexture.draw(tileTexture, x * this.tileSize, y * this.tileSize);
+        // Create sprite for this tile
+        const tileKey = `tile_${tileValue}`;
+        let tileSprite;
+
+        // Try to use the texture if available
+        if (this.scene.textures.exists(tileKey)) {
+          tileSprite = this.scene.add.sprite(
+            x * this.tileSize + this.tileSize / 2,
+            y * this.tileSize + this.tileSize / 2,
+            tileKey
+          );
+          tileSprite.setDisplaySize(this.tileSize, this.tileSize);
+        } else {
+          // Fallback based on tile type
+          let color;
+          if (tileValue > 0) {
+            color = 0x666666; // Wall
+          } else if (tileValue < 0) {
+            color = 0x111111; // Hole
+          } else {
+            color = 0x333333; // Floor
+          }
+
+          tileSprite = this.scene.add.rectangle(
+            x * this.tileSize + this.tileSize / 2,
+            y * this.tileSize + this.tileSize / 2,
+            this.tileSize,
+            this.tileSize,
+            color
+          );
+        }
+
+        // Add to container
+        container.add(tileSprite);
+
+        // For debugging: add tiny text showing the tile value
+        /*if (this.debug) {
+          const tileText = this.scene.add.text(
+            x * this.tileSize + 5,
+            y * this.tileSize + 5,
+            `${tileValue}`,
+            { fontSize: "10px", fill: "#ffffff" }
+          );
+          container.add(tileText);
+        }*/
       }
     }
   }
@@ -227,7 +279,7 @@ export class StructureRenderer {
     this.visibleStructures.clear();
 
     // Check each structure
-    Object.entries(this.structureTextures).forEach(([id, structureData]) => {
+    Object.entries(this.structures).forEach(([id, structureData]) => {
       // Calculate structure bounds in pixels
       const bounds = structureData.bounds;
       const pixelBounds = {
@@ -237,16 +289,24 @@ export class StructureRenderer {
         bottom: (bounds.y + bounds.height) * tileSize,
       };
 
+      // Add buffer to camera bounds for smoother transitions
+      const bufferedCameraBounds = {
+        left: cameraBounds.left - tileSize * 5,
+        right: cameraBounds.right + tileSize * 5,
+        top: cameraBounds.top - tileSize * 5,
+        bottom: cameraBounds.bottom + tileSize * 5,
+      };
+
       // Check if structure intersects with camera view
       const isVisible = !(
-        pixelBounds.right < cameraBounds.left ||
-        pixelBounds.left > cameraBounds.right ||
-        pixelBounds.bottom < cameraBounds.top ||
-        pixelBounds.top > cameraBounds.bottom
+        pixelBounds.right < bufferedCameraBounds.left ||
+        pixelBounds.left > bufferedCameraBounds.right ||
+        pixelBounds.bottom < bufferedCameraBounds.top ||
+        pixelBounds.top > bufferedCameraBounds.bottom
       );
 
       // Update visibility
-      structureData.texture.setVisible(isVisible);
+      structureData.container.setVisible(isVisible);
       structureData.visible = isVisible;
 
       if (isVisible) {
@@ -257,7 +317,7 @@ export class StructureRenderer {
     if (this.debug) {
       console.log(
         `Visible structures: ${this.visibleStructures.size}/${
-          Object.keys(this.structureTextures).length
+          Object.keys(this.structures).length
         }`
       );
     }
@@ -271,8 +331,8 @@ export class StructureRenderer {
     const visible = [];
 
     this.visibleStructures.forEach((id) => {
-      if (this.structureTextures[id]) {
-        visible.push(this.structureTextures[id]);
+      if (this.structures[id]) {
+        visible.push(this.structures[id]);
       }
     });
 
@@ -287,11 +347,8 @@ export class StructureRenderer {
     const newlyVisible = [];
 
     this.visibleStructures.forEach((id) => {
-      if (
-        !this.previouslyVisibleStructures.has(id) &&
-        this.structureTextures[id]
-      ) {
-        newlyVisible.push(this.structureTextures[id]);
+      if (!this.previouslyVisibleStructures.has(id) && this.structures[id]) {
+        newlyVisible.push(this.structures[id]);
       }
     });
 
@@ -322,7 +379,7 @@ export class StructureRenderer {
    * @returns {Object|null} - Structure that contains the point, or null
    */
   findStructureContainingTile(tileX, tileY) {
-    for (const [id, data] of Object.entries(this.structureTextures)) {
+    for (const [id, data] of Object.entries(this.structures)) {
       const bounds = data.bounds;
 
       if (
@@ -339,29 +396,18 @@ export class StructureRenderer {
   }
 
   /**
-   * Check if a point (in tile coordinates) is contained in any visible structure
-   * @param {number} tileX - Tile X coordinate
-   * @param {number} tileY - Tile Y coordinate
-   * @returns {boolean} - True if the point is in a visible structure
-   */
-  isTileInVisibleStructure(tileX, tileY) {
-    const structure = this.findStructureContainingTile(tileX, tileY);
-    return structure && this.isStructureVisible(structure.id);
-  }
-
-  /**
    * Clear all structures
    */
   clear() {
-    // Destroy all structure textures
-    Object.values(this.structureTextures).forEach((data) => {
-      if (data.texture) {
-        data.texture.destroy();
+    // Destroy all structures
+    Object.values(this.structures).forEach((data) => {
+      if (data.container) {
+        data.container.destroy();
       }
     });
 
     // Reset structure tracking
-    this.structureTextures = {};
+    this.structures = {};
     this.visibleStructures.clear();
     this.previouslyVisibleStructures.clear();
 

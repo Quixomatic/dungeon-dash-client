@@ -158,7 +158,7 @@ export class DungeonRenderer {
     this.setWorldBounds();
 
     // Initialize renderer components
-    this.backgroundRenderer.render(mapData, this.tileSize);
+    //this.backgroundRenderer.render(mapData, this.tileSize);
     this.structureRenderer.render(mapData, this.tileSize);
     this.minimapRenderer.render(mapData, this.tileSize);
 

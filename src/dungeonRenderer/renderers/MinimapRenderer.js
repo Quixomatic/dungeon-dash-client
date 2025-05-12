@@ -1,4 +1,4 @@
-// src/dungeonRenderer/ui/MinimapRenderer.js
+// src/dungeonRenderer/renderers/MinimapRenderer.js - Fixed implementation
 /**
  * MinimapRenderer - Handles rendering of the dungeon minimap
  * Creates a small overview map in the corner of the screen
@@ -14,7 +14,7 @@ export class MinimapRenderer {
     this.floorText = null;
 
     // Minimap settings
-    this.size = 400; // Default size in pixels
+    this.size = 200; // Default size in pixels (smaller than original)
     this.scale = 0.01; // Default scale factor
     this.margin = 20; // Margin from screen edge
 
@@ -30,11 +30,15 @@ export class MinimapRenderer {
    * @param {Object} options - Initialization options
    */
   init(options = {}) {
-    this.size = options.size || 400;
+    this.size = options.size || this.size;
     this.debug = options.debug || false;
 
     // Create the minimap container
     this.createContainer();
+
+    if (this.debug) {
+      console.log(`MinimapRenderer initialized with size ${this.size}px`);
+    }
 
     return this;
   }
@@ -88,6 +92,10 @@ export class MinimapRenderer {
 
     // Position the entire container
     this.container.setPosition(x, y);
+
+    if (this.debug) {
+      console.log(`Minimap container created at (${x}, ${y})`);
+    }
   }
 
   /**
@@ -96,7 +104,17 @@ export class MinimapRenderer {
    * @param {number} tileSize - Size of tiles in pixels
    */
   render(mapData, tileSize) {
-    if (!mapData) return;
+    if (!mapData) {
+      console.error("No map data provided to MinimapRenderer.render()");
+      return;
+    }
+
+    if (this.debug) {
+      console.log("Rendering minimap with map data:", {
+        size: `${mapData.dungeonTileWidth}x${mapData.dungeonTileHeight}`,
+        floorLevel: mapData.floorLevel || 1,
+      });
+    }
 
     // Clear existing minimap
     this.graphics.clear();
@@ -137,23 +155,17 @@ export class MinimapRenderer {
    * @param {number} tileSize - Size of tiles in pixels
    */
   drawMinimapContents(mapData, tileSize) {
-    // Draw dungeon structure first
-    if (mapData.structural) {
-      // First draw floor background
-      this.graphics.fillStyle(0x333333, 0.8);
-      this.graphics.fillRect(
-        this.offsetX,
-        this.offsetY,
-        mapData.dungeonTileWidth * tileSize * this.scale,
-        mapData.dungeonTileHeight * tileSize * this.scale
-      );
+    // Draw dungeon background first
+    this.graphics.fillStyle(0x333333, 0.8);
+    this.graphics.fillRect(
+      this.offsetX,
+      this.offsetY,
+      mapData.dungeonTileWidth * tileSize * this.scale,
+      mapData.dungeonTileHeight * tileSize * this.scale
+    );
 
-      // Then draw walls and rooms
-      this.drawStructures(mapData, tileSize);
-    } else if (mapData.layers && mapData.layers.tiles) {
-      // Use tile data directly if structural data isn't available
-      this.drawTiles(mapData, tileSize);
-    }
+    // Draw walls and rooms
+    this.drawStructuralElements(mapData, tileSize);
 
     // Draw spawn points
     this.drawSpawnPoints(mapData);
@@ -171,17 +183,21 @@ export class MinimapRenderer {
   }
 
   /**
-   * Draw structures (rooms and corridors) on the minimap
+   * Draw structural elements (rooms, corridors) on minimap
    * @param {Object} mapData - Map data from server
    * @param {number} tileSize - Size of tiles in pixels
    */
-  drawStructures(mapData, tileSize) {
-    const structural = mapData.structural;
+  drawStructuralElements(mapData, tileSize) {
+    // Direct tile rendering if no structural data is available
+    if (!mapData.structural) {
+      this.drawTilesDirectly(mapData, tileSize);
+      return;
+    }
 
-    // Draw rooms in a different color
+    // Draw rooms in a darker color
     this.graphics.fillStyle(0x444444, 1);
-    if (structural.rooms && Array.isArray(structural.rooms)) {
-      structural.rooms.forEach((room) => {
+    if (mapData.structural.rooms && Array.isArray(mapData.structural.rooms)) {
+      mapData.structural.rooms.forEach((room) => {
         const x = this.offsetX + room.x * tileSize * this.scale;
         const y = this.offsetY + room.y * tileSize * this.scale;
         const width = room.width * tileSize * this.scale;
@@ -193,8 +209,11 @@ export class MinimapRenderer {
 
     // Draw corridors in a slightly different color
     this.graphics.fillStyle(0x555555, 1);
-    if (structural.corridors && Array.isArray(structural.corridors)) {
-      structural.corridors.forEach((corridor) => {
+    if (
+      mapData.structural.corridors &&
+      Array.isArray(mapData.structural.corridors)
+    ) {
+      mapData.structural.corridors.forEach((corridor) => {
         const x = this.offsetX + corridor.x * tileSize * this.scale;
         const y = this.offsetY + corridor.y * tileSize * this.scale;
         const width = corridor.width * tileSize * this.scale;
@@ -206,8 +225,11 @@ export class MinimapRenderer {
 
     // Draw spawn rooms in a highlight color
     this.graphics.fillStyle(0x8800ff, 0.7);
-    if (structural.spawnRooms && Array.isArray(structural.spawnRooms)) {
-      structural.spawnRooms.forEach((room) => {
+    if (
+      mapData.structural.spawnRooms &&
+      Array.isArray(mapData.structural.spawnRooms)
+    ) {
+      mapData.structural.spawnRooms.forEach((room) => {
         const x = this.offsetX + room.x * tileSize * this.scale;
         const y = this.offsetY + room.y * tileSize * this.scale;
         const width = room.width * tileSize * this.scale;
@@ -219,30 +241,25 @@ export class MinimapRenderer {
   }
 
   /**
-   * Draw tiles directly on the minimap
+   * Draw tile data directly (used when no structural data is available)
    * @param {Object} mapData - Map data from server
    * @param {number} tileSize - Size of tiles in pixels
    */
-  drawTiles(mapData, tileSize) {
+  drawTilesDirectly(mapData, tileSize) {
+    if (!mapData.layers || !mapData.layers.tiles) {
+      if (this.debug) console.log("No tile data to draw on minimap");
+      return;
+    }
+
+    // Draw walls with a higher contrast
+    this.graphics.fillStyle(0x888888, 1);
+
     const tiles = mapData.layers.tiles;
-
-    // First draw floor background
-    this.graphics.fillStyle(0x333333, 0.8);
-    this.graphics.fillRect(
-      this.offsetX,
-      this.offsetY,
-      mapData.dungeonTileWidth * tileSize * this.scale,
-      mapData.dungeonTileHeight * tileSize * this.scale
-    );
-
-    // Draw walls
-    this.graphics.fillStyle(0x666666, 0.8);
-
     for (let y = 0; y < tiles.length; y++) {
       for (let x = 0; x < tiles[y].length; x++) {
         const tile = tiles[y][x];
 
-        // Only draw walls
+        // Only draw walls (non-zero values)
         if (tile > 0) {
           const miniX = this.offsetX + x * this.scale * tileSize;
           const miniY = this.offsetY + y * this.scale * tileSize;
@@ -259,7 +276,9 @@ export class MinimapRenderer {
    * @param {Object} mapData - Map data from server
    */
   drawSpawnPoints(mapData) {
-    if (!mapData.spawnPoints || !Array.isArray(mapData.spawnPoints)) return;
+    if (!mapData.spawnPoints || !Array.isArray(mapData.spawnPoints)) {
+      return;
+    }
 
     this.graphics.fillStyle(0x8800ff, 1);
 
@@ -272,17 +291,41 @@ export class MinimapRenderer {
   }
 
   /**
+   * Draw camera viewport on minimap
+   */
+  drawViewport() {
+    const camera = this.scene.cameras.main;
+    const viewX = this.offsetX + camera.scrollX * this.scale;
+    const viewY = this.offsetY + camera.scrollY * this.scale;
+    const viewWidth = camera.width * this.scale;
+    const viewHeight = camera.height * this.scale;
+
+    // Draw camera viewport rectangle
+    this.graphics.lineStyle(1, 0xffff00, 0.8);
+    this.graphics.strokeRect(viewX, viewY, viewWidth, viewHeight);
+  }
+
+  /**
    * Update player marker position
    * @param {number} x - Player x position in world
    * @param {number} y - Player y position in world
    */
   updatePlayerPosition(x, y) {
-    if (!this.playerMarker || !this.scale) return;
+    if (!this.playerMarker || !this.scale) {
+      return;
+    }
 
     const minimapX = this.offsetX + x * this.scale;
     const minimapY = this.offsetY + y * this.scale;
 
     this.playerMarker.setPosition(minimapX, minimapY);
+
+    if (this.debug) {
+      // Log only occasionally to prevent spam
+      if (Math.random() < 0.01) {
+        console.log(`Updating player marker to ${minimapX}, ${minimapY}`);
+      }
+    }
   }
 
   /**
@@ -297,6 +340,30 @@ export class MinimapRenderer {
 
     // Update container position
     this.container.setPosition(x, y);
+
+    if (this.debug) {
+      console.log(`Minimap repositioned to (${x}, ${y}) after resize`);
+    }
+  }
+
+  /**
+   * Set debug mode
+   * @param {boolean} enabled - Whether debug mode is enabled
+   */
+  setDebug(enabled) {
+    this.debug = enabled;
+    return this;
+  }
+
+  /**
+   * Toggle visibility of the minimap
+   * @param {boolean} visible - Whether the minimap should be visible
+   */
+  setVisible(visible) {
+    if (this.container) {
+      this.container.setVisible(visible);
+    }
+    return this;
   }
 
   /**
