@@ -8,16 +8,71 @@ export class TextureCache {
     this.scene = scene;
     this.cache = new Map();
 
-    // Define tile textures mapping - connects tile values to asset paths
-    this.tileTextureKeys = {
+    // Define tile textures mapping - this maps numeric tile values to specific PNG files
+    this.tileTextures = {
       // Basic types
-      "-2": "tile_hole", // Deep hole
-      "-1": "tile_edge", // Edge
-      0: "tile_floor", // Floor
+      "-2": "assets/tiles/hole.png", // Deep hole
+      "-1": "assets/tiles/edge.png", // Edge
+      0: "assets/tiles/ground.png", // Floor
 
-      // Wall types
-      1: "tile_wall",
-      46: "tile_wall_full", // Full solid wall
+      // Wall configurations - EXACT mapping based on your existing logic
+      1: "assets/tiles/s.png", // Simple walls, orientations
+      2: "assets/tiles/s.png",
+      3: "assets/tiles/s.png",
+      4: "assets/tiles/s.png",
+      5: "assets/tiles/s.png",
+      6: "assets/tiles/s.png",
+      7: "assets/tiles/s.png",
+      8: "assets/tiles/s.png",
+      9: "assets/tiles/s.png",
+      10: "assets/tiles/s.png",
+      11: "assets/tiles/s.png",
+      12: "assets/tiles/s.png",
+
+      // Horizontal walls
+      13: "assets/tiles/w-e.png",
+      14: "assets/tiles/w-e.png",
+      15: "assets/tiles/w-e.png",
+      16: "assets/tiles/w-e.png",
+      17: "assets/tiles/w-e.png",
+      18: "assets/tiles/w-e.png",
+      19: "assets/tiles/w-e.png",
+      20: "assets/tiles/w-e.png",
+      21: "assets/tiles/w-e.png",
+      22: "assets/tiles/w-e.png",
+      23: "assets/tiles/w-e.png",
+      24: "assets/tiles/w-e.png",
+      25: "assets/tiles/w-e.png",
+
+      // East corner walls
+      26: "assets/tiles/n-ne-e.png",
+      27: "assets/tiles/n-ne-e.png",
+      28: "assets/tiles/e.png",
+      29: "assets/tiles/n-ne-e.png",
+      30: "assets/tiles/n-ne-e.png",
+      31: "assets/tiles/e.png",
+      32: "assets/tiles/n-ne-e.png",
+      33: "assets/tiles/e.png",
+
+      // West corner walls
+      34: "assets/tiles/n-nw-w.png",
+      35: "assets/tiles/n-nw-w.png",
+      36: "assets/tiles/w.png",
+      37: "assets/tiles/n-nw-w.png",
+      38: "assets/tiles/n-nw-w.png",
+      39: "assets/tiles/n-nw-w.png",
+      40: "assets/tiles/w.png",
+      41: "assets/tiles/w.png",
+
+      // North walls and corners
+      42: "assets/tiles/n.png",
+      43: "assets/tiles/n.png",
+      44: "assets/tiles/ne.png",
+      45: "assets/tiles/nw.png",
+
+      // Special cases
+      46: "assets/tiles/all.png", // Full solid wall
+      47: "assets/tiles/s.png", // Isolated wall
     };
 
     // Define prop texture mapping
@@ -44,22 +99,10 @@ export class TextureCache {
     }
 
     // Get the texture key for this tile value
-    let textureKey = this.tileTextureKeys[tileValue];
-
-    // If no specific mapping, use generic wall/floor
-    if (!textureKey) {
-      if (tileValue > 0) {
-        textureKey = "tile_wall"; // Default wall texture
-      } else if (tileValue < 0) {
-        textureKey = "tile_hole"; // Default hole texture
-      } else {
-        textureKey = "tile_floor"; // Default floor texture
-      }
-    }
-
+    const textureKey = `tile_${tileValue}`;
     let texture;
 
-    // Try to use the texture if it exists
+    // Try to use an existing texture if it exists
     if (this.scene.textures.exists(textureKey)) {
       texture = this.scene.make.image({
         x: 0,
@@ -70,54 +113,148 @@ export class TextureCache {
       texture.displayWidth = tileSize;
       texture.displayHeight = tileSize;
     } else {
-      // Create a colored rectangle as fallback
-      let color;
+      // Get the correct PNG path for this specific tile value
+      const pngPath = this.tileTextures[tileValue];
 
-      if (tileValue > 0) {
-        // Wall color based on type
-        if (tileValue === 46) {
-          color = 0x444444; // Full wall
-        } else {
-          color = 0x666666; // Regular wall
-        }
-      } else if (tileValue < 0) {
-        color = 0x111111; // Hole
+      if (pngPath && !this.scene.textures.exists(textureKey)) {
+        // If the texture isn't loaded yet, create a fallback and queue the load
+        this.scene.load.image(textureKey, pngPath);
+        this.scene.load.once("complete", () => {
+          // When loaded, clear the cache entry so it's recreated next time
+          this.cache.delete(cacheKey);
+        });
+        // Start loading - this will happen asynchronously
+        this.scene.load.start();
+
+        // Create a temporary texture until the real one loads
+        texture = this.createTemporaryTileTexture(tileValue, tileSize);
       } else {
-        color = 0x333333; // Floor
+        // Create a fallback texture
+        texture = this.createFallbackTileTexture(tileValue, tileSize);
       }
-
-      // Create a graphics texture
-      const graphics = this.scene.make.graphics({ x: 0, y: 0, add: false });
-      graphics.fillStyle(color);
-      graphics.fillRect(0, 0, tileSize, tileSize);
-
-      // Add some texture to walls and floors
-      if (tileValue > 0) {
-        // Wall texture
-        graphics.fillStyle(color - 0x111111);
-        graphics.fillRect(2, 2, tileSize - 4, tileSize - 4);
-        graphics.lineStyle(1, color + 0x111111);
-        graphics.strokeRect(1, 1, tileSize - 2, tileSize - 2);
-      } else if (tileValue === 0) {
-        // Floor texture - add some noise
-        graphics.fillStyle(0x222222);
-
-        // Random dots
-        for (let i = 0; i < 5; i++) {
-          const x = Math.random() * tileSize;
-          const y = Math.random() * tileSize;
-          const size = 1 + Math.random() * 3;
-          graphics.fillRect(x, y, size, size);
-        }
-      }
-
-      texture = graphics;
     }
 
     // Cache for reuse
     this.cache.set(cacheKey, texture);
 
     return texture;
+  }
+
+  /**
+   * Create a temporary texture while the real one loads
+   * @param {number} tileValue - Tile value
+   * @param {number} tileSize - Size of tiles in pixels
+   * @returns {Phaser.GameObjects.Graphics} - Graphics object as temporary texture
+   */
+  createTemporaryTileTexture(tileValue, tileSize) {
+    const graphics = this.scene.make.graphics({ x: 0, y: 0, add: false });
+
+    // Choose color based on tile type
+    let color;
+    if (tileValue > 0) {
+      // Wall colors - slightly different shades based on type
+      if (tileValue <= 12) color = 0x666666; // Simple walls
+      else if (tileValue <= 25) color = 0x777777; // Horizontal walls
+      else if (tileValue <= 33) color = 0x888888; // East corner walls
+      else if (tileValue <= 41) color = 0x999999; // West corner walls
+      else if (tileValue <= 45) color = 0xaaaaaa; // North walls
+      else color = 0x555555; // Special cases
+    } else if (tileValue < 0) {
+      color = 0x111111; // Hole
+    } else {
+      color = 0x333333; // Floor
+    }
+
+    // Draw a simple colored rectangle
+    graphics.fillStyle(color);
+    graphics.fillRect(0, 0, tileSize, tileSize);
+
+    // Add a border for walls
+    if (tileValue > 0) {
+      graphics.lineStyle(1, 0x000000, 0.5);
+      graphics.strokeRect(0, 0, tileSize, tileSize);
+    }
+
+    return graphics;
+  }
+
+  /**
+   * Create a fallback texture for unknown tile values
+   * @param {number} tileValue - Tile value
+   * @param {number} tileSize - Size of tiles in pixels
+   * @returns {Phaser.GameObjects.Graphics} - Graphics object as fallback texture
+   */
+  createFallbackTileTexture(tileValue, tileSize) {
+    const graphics = this.scene.make.graphics({ x: 0, y: 0, add: false });
+
+    // Choose color based on generalized tile type
+    let color;
+    if (tileValue > 0) {
+      color = 0x666666; // Wall
+    } else if (tileValue < 0) {
+      color = 0x111111; // Hole
+    } else {
+      color = 0x333333; // Floor
+    }
+
+    // Draw a simple colored rectangle
+    graphics.fillStyle(color);
+    graphics.fillRect(0, 0, tileSize, tileSize);
+
+    // Add tile value as text for debugging
+    const textColor = tileValue > 0 ? 0xffffff : 0xaaaaaa;
+    const textGraphics = this.scene.make.graphics({ x: 0, y: 0, add: false });
+    textGraphics.fillStyle(textColor);
+
+    // Create a minimal digit representation
+    const digits = tileValue.toString();
+    const digitSize = Math.min(tileSize / 4, 8);
+    const startX = tileSize / 2 - (digits.length * digitSize) / 2;
+
+    for (let i = 0; i < digits.length; i++) {
+      const digit = parseInt(digits[i]);
+      const x = startX + i * digitSize;
+      const y = tileSize / 2 - digitSize / 2;
+
+      switch (digit) {
+        case 0:
+          textGraphics.fillRect(x, y, digitSize, digitSize);
+          break;
+        case 1:
+          textGraphics.fillRect(x + digitSize / 2, y, digitSize / 4, digitSize);
+          break;
+        case 2:
+          textGraphics.fillRect(x, y, digitSize, digitSize / 4);
+          textGraphics.fillRect(
+            x + digitSize - digitSize / 4,
+            y,
+            digitSize / 4,
+            digitSize / 2
+          );
+          textGraphics.fillRect(x, y + digitSize / 2, digitSize, digitSize / 4);
+          textGraphics.fillRect(
+            x,
+            y + digitSize / 2,
+            digitSize / 4,
+            digitSize / 2
+          );
+          textGraphics.fillRect(
+            x,
+            y + digitSize - digitSize / 4,
+            digitSize,
+            digitSize / 4
+          );
+          break;
+        // Add other digits if needed
+        default:
+          textGraphics.fillRect(x, y, digitSize / 2, digitSize);
+      }
+    }
+
+    graphics.draw(textGraphics);
+    textGraphics.destroy();
+
+    return graphics;
   }
 
   /**

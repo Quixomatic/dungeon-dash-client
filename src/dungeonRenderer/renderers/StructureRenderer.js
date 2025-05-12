@@ -132,7 +132,7 @@ export class StructureRenderer {
   }
 
   /**
-   * Draw tiles to a render texture
+   * Draw tiles to a render texture - USES EXACT TILE VALUES FOR CORRECT PNG SELECTION
    * @param {Object} mapData - Map data from server
    * @param {Phaser.GameObjects.RenderTexture} renderTexture - Texture to draw to
    * @param {Object} bounds - Bounds to draw (in tile coordinates)
@@ -141,7 +141,7 @@ export class StructureRenderer {
     // Clear the texture first
     renderTexture.clear();
 
-    // Draw each tile in the bounds
+    // Draw each tile in the bounds with its EXACT texture based on tile value
     for (let y = 0; y < bounds.height; y++) {
       for (let x = 0; x < bounds.width; x++) {
         const worldX = bounds.x + x;
@@ -153,13 +153,16 @@ export class StructureRenderer {
         // If tile coordinates are within the map data
         if (
           mapData.layers.tiles &&
+          worldY >= 0 &&
+          worldY < mapData.layers.tiles.length &&
+          worldX >= 0 &&
           mapData.layers.tiles[worldY] &&
-          mapData.layers.tiles[worldY][worldX] !== undefined
+          worldX < mapData.layers.tiles[worldY].length
         ) {
           tileValue = mapData.layers.tiles[worldY][worldX];
         }
 
-        // Get the appropriate texture for this tile
+        // Get the appropriate texture for this tile based on its specific value
         const tileTexture = this.textureCache.getTileTexture(
           tileValue,
           this.tileSize
