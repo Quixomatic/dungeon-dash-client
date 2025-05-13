@@ -1,4 +1,4 @@
-// src/dungeonRenderer/renderers/StructureRenderer.js - Corrected tile rendering
+// src/dungeonRenderer/renderers/StructureRenderer.js - IMPROVED VERSION
 /**
  * StructureRenderer - Handles rendering of dungeon rooms and corridors
  * Uses sprite batching for cross-platform compatibility
@@ -9,11 +9,14 @@ export class StructureRenderer {
     this.textureCache = textureCache;
     this.container = scene.add.container();
     this.structures = {}; // Map of structure ID to structure object
-    this.visibleStructures = new Set();
+    this.visibleStructures = new Set(); // Set of visible structure IDs
     this.previouslyVisibleStructures = new Set();
     this.tileSize = 64;
-    this.buffer = 5; // Default buffer size in tiles
+    this.buffer = 8; // IMPROVED: Increased buffer from 5 to 8 tiles
     this.debug = false;
+
+    // New property to track if a structure has ever been rendered
+    this.renderedStructures = new Set();
   }
 
   /**
@@ -21,7 +24,7 @@ export class StructureRenderer {
    * @param {Object} options - Initialization options
    */
   init(options = {}) {
-    this.buffer = options.buffer || 5;
+    this.buffer = options.buffer || 1; // IMPROVED: Default to higher buffer
     this.tileSize = options.tileSize || 64;
     this.debug = options.debug || false;
     this.container.setDepth(10);
@@ -214,14 +217,14 @@ export class StructureRenderer {
 
         // For debugging: add tiny text showing the tile value
         /*if (this.debug) {
-          const tileText = this.scene.add.text(
-            x * this.tileSize + 5,
-            y * this.tileSize + 5,
-            `${tileValue}`,
-            { fontSize: "10px", fill: "#ffffff" }
-          );
-          container.add(tileText);
-        }*/
+            const tileText = this.scene.add.text(
+              x * this.tileSize + 5,
+              y * this.tileSize + 5,
+              `${tileValue}`,
+              { fontSize: "10px", fill: "#ffffff" }
+            );
+            container.add(tileText);
+          }*/
       }
     }
   }
@@ -278,6 +281,15 @@ export class StructureRenderer {
     this.previouslyVisibleStructures = new Set(this.visibleStructures);
     this.visibleStructures.clear();
 
+    // IMPROVED: Add a larger buffer to camera bounds for smoother transitions
+    const bufferSize = tileSize * 10; // Increased from 5 to 10 tiles
+    const bufferedCameraBounds = {
+      left: cameraBounds.left - bufferSize,
+      right: cameraBounds.right + bufferSize,
+      top: cameraBounds.top - bufferSize,
+      bottom: cameraBounds.bottom + bufferSize,
+    };
+
     // Check each structure
     Object.entries(this.structures).forEach(([id, structureData]) => {
       // Calculate structure bounds in pixels
@@ -287,14 +299,6 @@ export class StructureRenderer {
         right: (bounds.x + bounds.width) * tileSize,
         top: bounds.y * tileSize,
         bottom: (bounds.y + bounds.height) * tileSize,
-      };
-
-      // Add buffer to camera bounds for smoother transitions
-      const bufferedCameraBounds = {
-        left: cameraBounds.left - tileSize * 5,
-        right: cameraBounds.right + tileSize * 5,
-        top: cameraBounds.top - tileSize * 5,
-        bottom: cameraBounds.bottom + tileSize * 5,
       };
 
       // Check if structure intersects with camera view
@@ -311,6 +315,9 @@ export class StructureRenderer {
 
       if (isVisible) {
         this.visibleStructures.add(id);
+
+        // IMPROVED: Track that this structure has been rendered at least once
+        this.renderedStructures.add(id);
       }
     });
 
@@ -410,6 +417,7 @@ export class StructureRenderer {
     this.structures = {};
     this.visibleStructures.clear();
     this.previouslyVisibleStructures.clear();
+    this.renderedStructures.clear();
 
     // Clear container
     this.container.removeAll(true);
