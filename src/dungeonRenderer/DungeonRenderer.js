@@ -37,10 +37,10 @@ export class DungeonRenderer {
 
     // Last camera position for visibility updates
     this.lastCameraPosition = { x: 0, y: 0 };
-    
+
     // Track active update timer
     this.updateTimer = null;
-    
+
     // Performance optimization
     this.updateCount = 0;
     this.lastUpdateTime = 0;
@@ -87,10 +87,11 @@ export class DungeonRenderer {
 
     // Set up camera movement listener
     this.scene.cameras.main.on("camerascroll", this.onCameraMove, this);
-    
+
     // Initialize debug graphics if needed
     if (this.debug) {
-      this.debugGraphics = this.scene.add.graphics()
+      this.debugGraphics = this.scene.add
+        .graphics()
         .setDepth(1000)
         .setScrollFactor(0);
       this.initDebugUI();
@@ -168,22 +169,37 @@ export class DungeonRenderer {
     // Set world bounds
     this.setWorldBounds();
 
+    // NEW: Create all structures near initial camera position first
+    const initialCameraBounds = {
+      left: this.scene.cameras.main.scrollX,
+      right: this.scene.cameras.main.scrollX + this.scene.cameras.main.width,
+      top: this.scene.cameras.main.scrollY,
+      bottom: this.scene.cameras.main.scrollY + this.scene.cameras.main.height,
+    };
+
+    // Apply a large buffer for initial view
+    const initBuffer = this.tileSize * 20;
+    const initialViewBounds = {
+      left: initialCameraBounds.left - initBuffer,
+      right: initialCameraBounds.right + initBuffer,
+      top: initialCameraBounds.top - initBuffer,
+      bottom: initialCameraBounds.bottom + initBuffer,
+    };
+
     // Initialize renderer components
-    //this.backgroundRenderer.render(mapData, this.tileSize); // Turned this off to make sure we properly render all the other things first
-    this.structureRenderer.render(mapData, this.tileSize);
+    this.structureRenderer.render(mapData, this.tileSize, initialViewBounds);
     this.minimapRenderer.render(mapData, this.tileSize);
 
     // Initial update of visible elements
     this.updateVisibility(true);
-    
-    // IMPROVED: Schedule periodic full visibility updates
-    // This ensures all structures get rendered even if player moves very quickly
+
+    // Schedule periodic full visibility updates
     this.startPeriodicUpdates();
 
     console.timeEnd("dungeonRender");
     return this;
   }
-  
+
   /**
    * IMPROVED: Start periodic full visibility updates
    * This ensures rooms are rendered even during fast movement
@@ -193,7 +209,7 @@ export class DungeonRenderer {
     if (this.updateTimer) {
       clearInterval(this.updateTimer);
     }
-    
+
     // Set up a periodic update every 1000ms (1 second)
     this.updateTimer = setInterval(() => {
       // Only do the update if it's been more than 200ms since last manual update
@@ -236,7 +252,7 @@ export class DungeonRenderer {
    */
   updateVisibility(forceUpdate = false) {
     if (!this.mapData) return;
-    
+
     this.lastUpdateTime = Date.now();
     this.updateCount++;
 
@@ -248,12 +264,12 @@ export class DungeonRenderer {
       top: camera.scrollY,
       bottom: camera.scrollY + camera.height,
     };
-    
+
     // IMPROVED: Add visual debug representation of camera bounds
     if (this.debug && this.debugGraphics) {
       this.debugGraphics.clear();
       this.debugGraphics.lineStyle(2, 0xff0000, 0.5);
-      
+
       // Draw camera bounds
       this.debugGraphics.strokeRect(
         cameraBounds.left - camera.scrollX,
@@ -261,7 +277,7 @@ export class DungeonRenderer {
         camera.width,
         camera.height
       );
-      
+
       // Draw expanded bounds used for culling
       const buffer = this.tileSize * 10;
       this.debugGraphics.lineStyle(1, 0x00ff00, 0.3);
@@ -273,16 +289,131 @@ export class DungeonRenderer {
       );
     }
 
-    // Update structure visibility
+    // NEW: Check if any rooms within camera bounds aren't created yet and create them
+    // Apply a buffer for dynamic structure creation
+    const dynBuffer = this.tileSize * 15; // Large buffer to ensure rooms are created before they're needed
+    const dynamicBounds = {
+      left: cameraBounds.left - dynBuffer,
+      right: cameraBounds.right + dynBuffer,
+      top: cameraBounds.top - dynBuffer,
+      bottom: cameraBounds.bottom + dynBuffer,
+    };
+
+    if (this.mapData && this.mapData.structural) {
+      // Check and create rooms
+      if (
+        this.mapData.structural.rooms &&
+        Array.isArray(this.mapData.structural.rooms)
+      ) {
+        this.mapData.structural.rooms.forEach((room) => {
+          const roomId = `room_${room.id || room.x + "_" + room.y}`;
+
+          // If this room doesn't exist yet, check if it should be visible
+          if (!this.structureRenderer.structures[roomId]) {
+            const isInView = this.culling.isStructureVisible(
+              { x: room.x, y: room.y, width: room.width, height: room.height },
+              dynamicBounds,
+              this.tileSize
+            );
+
+            // If room should be visible, render it
+            if (isInView) {
+              if (this.debug) {
+                console.log(
+                  `Dynamically creating room: ${roomId} at (${room.x},${room.y})`
+                );
+              }
+              this.structureRenderer.renderStructure(
+                this.mapData,
+                room,
+                "room"
+              );
+            }
+          }
+        });
+      }
+
+      // Similarly check corridors and spawn rooms if needed
+      // Only add these if they also have visibility issues
+      if (forceUpdate) {
+        // For corridors
+        if (
+          this.mapData.structural.corridors &&
+          Array.isArray(this.mapData.structural.corridors)
+        ) {
+          this.mapData.structural.corridors.forEach((corridor) => {
+            const corridorId = `corridor_${
+              corridor.id || corridor.x + "_" + corridor.y
+            }`;
+
+            if (!this.structureRenderer.structures[corridorId]) {
+              const isInView = this.culling.isStructureVisible(
+                {
+                  x: corridor.x,
+                  y: corridor.y,
+                  width: corridor.width,
+                  height: corridor.height,
+                },
+                dynamicBounds,
+                this.tileSize
+              );
+
+              if (isInView) {
+                this.structureRenderer.renderStructure(
+                  this.mapData,
+                  corridor,
+                  "corridor"
+                );
+              }
+            }
+          });
+        }
+
+        // For spawn rooms
+        if (
+          this.mapData.structural.spawnRooms &&
+          Array.isArray(this.mapData.structural.spawnRooms)
+        ) {
+          this.mapData.structural.spawnRooms.forEach((spawnRoom) => {
+            const spawnRoomId = `spawnRoom_${
+              spawnRoom.id || spawnRoom.x + "_" + spawnRoom.y
+            }`;
+
+            if (!this.structureRenderer.structures[spawnRoomId]) {
+              const isInView = this.culling.isStructureVisible(
+                {
+                  x: spawnRoom.x,
+                  y: spawnRoom.y,
+                  width: spawnRoom.width,
+                  height: spawnRoom.height,
+                },
+                dynamicBounds,
+                this.tileSize
+              );
+
+              if (isInView) {
+                this.structureRenderer.renderStructure(
+                  this.mapData,
+                  spawnRoom,
+                  "spawnRoom"
+                );
+              }
+            }
+          });
+        }
+      }
+    }
+
+    // Update structure visibility for existing structures
     this.structureRenderer.updateVisibility(cameraBounds, this.tileSize);
 
     // Get visible structures
     const visibleStructures = this.structureRenderer.getVisibleStructures();
-    
+
     // IMPROVED: If doing a force update, render props/monsters in all structures
     // This ensures nothing is missed
     if (forceUpdate) {
-      Object.values(this.structureRenderer.structures).forEach(structure => {
+      Object.values(this.structureRenderer.structures).forEach((structure) => {
         this.propRenderer.renderPropsInStructure(
           this.mapData,
           structure,
@@ -296,8 +427,9 @@ export class DungeonRenderer {
       });
     } else {
       // Normal flow - only process newly visible structures
-      const newlyVisibleStructures = this.structureRenderer.getNewlyVisibleStructures();
-      
+      const newlyVisibleStructures =
+        this.structureRenderer.getNewlyVisibleStructures();
+
       newlyVisibleStructures.forEach((structure) => {
         this.propRenderer.renderPropsInStructure(
           this.mapData,
@@ -333,11 +465,13 @@ export class DungeonRenderer {
       camera: `${Math.round(this.lastCameraPosition.x)},${Math.round(
         this.lastCameraPosition.y
       )}`,
-      updates: this.updateCount
+      updates: this.updateCount,
     };
 
     this.debugText.setText(
-      `Structures: ${stats.structures}/${Object.keys(this.structureRenderer.structures).length} | Props: ${stats.props} | Updates: ${stats.updates}`
+      `Structures: ${stats.structures}/${
+        Object.keys(this.structureRenderer.structures).length
+      } | Props: ${stats.props} | Updates: ${stats.updates}`
     );
   }
 
@@ -368,11 +502,11 @@ export class DungeonRenderer {
       clearInterval(this.updateTimer);
       this.updateTimer = null;
     }
-    
+
     // Reset update counters
     this.updateCount = 0;
     this.lastUpdateTime = 0;
-    
+
     // Clear all sub-renderers
     this.backgroundRenderer.clear();
     this.structureRenderer.clear();
@@ -401,7 +535,7 @@ export class DungeonRenderer {
     if (this.debugText) {
       this.debugText.setPosition(10, 10);
     }
-    
+
     // Force a visibility update to account for new view size
     this.updateVisibility(true);
   }
@@ -415,7 +549,7 @@ export class DungeonRenderer {
       clearInterval(this.updateTimer);
       this.updateTimer = null;
     }
-    
+
     // Remove event listeners
     this.scene.cameras.main.off("camerascroll", this.onCameraMove);
 
@@ -435,7 +569,7 @@ export class DungeonRenderer {
       this.debugText.destroy();
       this.debugText = null;
     }
-    
+
     if (this.debugGraphics) {
       this.debugGraphics.destroy();
       this.debugGraphics = null;

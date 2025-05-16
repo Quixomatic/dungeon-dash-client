@@ -35,8 +35,9 @@ export class StructureRenderer {
    * Render all structures from map data
    * @param {Object} mapData - Map data from server
    * @param {number} tileSize - Size of tiles in pixels
+   * @param {Object} initialViewBounds - Optional initial view bounds for selective rendering
    */
-  render(mapData, tileSize) {
+  render(mapData, tileSize, initialViewBounds = null) {
     if (!mapData || !mapData.structural) return;
 
     this.tileSize = tileSize || this.tileSize;
@@ -44,7 +45,13 @@ export class StructureRenderer {
     // Process all rooms
     if (mapData.structural.rooms && Array.isArray(mapData.structural.rooms)) {
       mapData.structural.rooms.forEach((room) => {
-        this.renderStructure(mapData, room, "room");
+        // If initialViewBounds is provided, only create rooms within that area initially
+        if (
+          !initialViewBounds ||
+          this.isInInitialView(room, initialViewBounds, tileSize)
+        ) {
+          this.renderStructure(mapData, room, "room");
+        }
       });
     }
 
@@ -54,7 +61,13 @@ export class StructureRenderer {
       Array.isArray(mapData.structural.corridors)
     ) {
       mapData.structural.corridors.forEach((corridor) => {
-        this.renderStructure(mapData, corridor, "corridor");
+        // If initialViewBounds is provided, only create corridors within that area initially
+        if (
+          !initialViewBounds ||
+          this.isInInitialView(corridor, initialViewBounds, tileSize)
+        ) {
+          this.renderStructure(mapData, corridor, "corridor");
+        }
       });
     }
 
@@ -64,7 +77,13 @@ export class StructureRenderer {
       Array.isArray(mapData.structural.spawnRooms)
     ) {
       mapData.structural.spawnRooms.forEach((room) => {
-        this.renderStructure(mapData, room, "spawnRoom");
+        // If initialViewBounds is provided, only create spawn rooms within that area initially
+        if (
+          !initialViewBounds ||
+          this.isInInitialView(room, initialViewBounds, tileSize)
+        ) {
+          this.renderStructure(mapData, room, "spawnRoom");
+        }
       });
     }
 
@@ -73,7 +92,45 @@ export class StructureRenderer {
 
     if (this.debug) {
       console.log(`Rendered ${Object.keys(this.structures).length} structures`);
+
+      // If using selective rendering, show how many structures were omitted
+      if (initialViewBounds) {
+        const totalRooms =
+          (mapData.structural.rooms?.length || 0) +
+          (mapData.structural.corridors?.length || 0) +
+          (mapData.structural.spawnRooms?.length || 0);
+
+        console.log(
+          `Initial render included ${
+            Object.keys(this.structures).length
+          } of ${totalRooms} total structures`
+        );
+      }
     }
+  }
+
+  /**
+   * Check if a structure is within the initial view bounds
+   * @param {Object} structure - Structure data
+   * @param {Object} viewBounds - View bounds in pixels
+   * @param {number} tileSize - Size of tiles in pixels
+   * @returns {boolean} - True if structure is in view
+   */
+  isInInitialView(structure, viewBounds, tileSize) {
+    const pixelBounds = {
+      left: structure.x * tileSize,
+      right: (structure.x + structure.width) * tileSize,
+      top: structure.y * tileSize,
+      bottom: (structure.y + structure.height) * tileSize,
+    };
+
+    // Check if the structure intersects with the view bounds
+    return !(
+      pixelBounds.right < viewBounds.left ||
+      pixelBounds.left > viewBounds.right ||
+      pixelBounds.bottom < viewBounds.top ||
+      pixelBounds.top > viewBounds.bottom
+    );
   }
 
   /**

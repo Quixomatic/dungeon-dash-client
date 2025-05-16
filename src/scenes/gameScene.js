@@ -4,7 +4,7 @@ import { PlayerManager } from "../managers/PlayerManager.js";
 import { InputHandler } from "../managers/InputHandler.js";
 import { NetworkHandler } from "../managers/NetworkHandler.js";
 import { ReconciliationManager } from "../managers/ReconciliationManager.js";
-import { DungeonRenderer } from "../managers/DungeonRenderer.js";
+import { DungeonRenderer } from "../dungeonRenderer/DungeonRenderer.js"; // Updated import
 import { UIManager } from "../managers/UIManager.js";
 import { DebugManager } from "../managers/DebugManager.js";
 import { CollisionSystem } from "../systems/CollisionSystem.js";
@@ -49,134 +49,9 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    // Pre-generate tile textures
-    this.generateTileTextures();
-
-    if (this.dungeonRenderer) {
-      this.dungeonRenderer.preloadTileAssets();
-    } else {
-      // If dungeonRenderer isn't created yet, create a temporary one just for preloading
-      const tempRenderer = new DungeonRenderer(this);
-      tempRenderer.preloadTileAssets();
-    }
-  }
-
-  /**
-   * Generate textures for various tile and prop types
-   */
-  generateTileTextures() {
-    // Floor texture
-    if (!this.textures.exists("floor")) {
-      const floor = this.textures.createCanvas("floor", 64, 64);
-      const ctx = floor.getContext();
-      ctx.fillStyle = "#333333";
-      ctx.fillRect(0, 0, 64, 64);
-      ctx.strokeStyle = "#222222";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(0, 0, 64, 64);
-
-      // Add some noise/texture
-      ctx.fillStyle = "#2a2a2a";
-      for (let i = 0; i < 20; i++) {
-        const x = Math.random() * 64;
-        const y = Math.random() * 64;
-        const size = 1 + Math.random() * 3;
-        ctx.fillRect(x, y, size, size);
-      }
-
-      floor.refresh();
-    }
-
-    // Wall texture
-    if (!this.textures.exists("wall")) {
-      const wall = this.textures.createCanvas("wall", 64, 64);
-      const ctx = wall.getContext();
-      ctx.fillStyle = "#666666";
-      ctx.fillRect(0, 0, 64, 64);
-
-      // Add some texture to walls
-      ctx.fillStyle = "#555555";
-      ctx.fillRect(4, 4, 56, 56);
-      ctx.strokeStyle = "#777777";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(2, 2, 60, 60);
-
-      wall.refresh();
-    }
-
-    // Torch texture
-    if (!this.textures.exists("torch")) {
-      const torch = this.textures.createCanvas("torch", 32, 32);
-      const ctx = torch.getContext();
-
-      // Torch base
-      ctx.fillStyle = "#553300";
-      ctx.fillRect(12, 16, 8, 16);
-
-      // Flame
-      ctx.fillStyle = "#ff9900";
-      ctx.beginPath();
-      ctx.moveTo(12, 16);
-      ctx.quadraticCurveTo(16, 0, 20, 16);
-      ctx.closePath();
-      ctx.fill();
-
-      // Highlight
-      ctx.fillStyle = "#ffcc00";
-      ctx.beginPath();
-      ctx.moveTo(14, 16);
-      ctx.quadraticCurveTo(16, 4, 18, 16);
-      ctx.closePath();
-      ctx.fill();
-
-      torch.refresh();
-    }
-
-    // Spawn point texture
-    if (!this.textures.exists("spawn")) {
-      const spawn = this.textures.createCanvas("spawn", 64, 64);
-      const ctx = spawn.getContext();
-
-      // Circle with glow
-      const gradient = ctx.createRadialGradient(32, 32, 5, 32, 32, 32);
-      gradient.addColorStop(0, "#8800ff");
-      gradient.addColorStop(0.5, "rgba(136, 0, 255, 0.5)");
-      gradient.addColorStop(1, "rgba(136, 0, 255, 0)");
-
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, 64, 64);
-
-      // Center marker
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(32, 32, 5, 0, Math.PI * 2);
-      ctx.fill();
-
-      spawn.refresh();
-    }
-
-    // Chest texture
-    if (!this.textures.exists("chest")) {
-      const chest = this.textures.createCanvas("chest", 48, 32);
-      const ctx = chest.getContext();
-
-      // Chest base
-      ctx.fillStyle = "#8B4513";
-      ctx.fillRect(4, 8, 40, 24);
-
-      // Chest top
-      ctx.fillStyle = "#A0522D";
-      ctx.fillRect(8, 4, 32, 8);
-
-      // Metal details
-      ctx.fillStyle = "#FFD700";
-      ctx.fillRect(20, 14, 8, 6);
-      ctx.strokeStyle = "#FFD700";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(6, 10, 36, 20);
-
-      chest.refresh();
-    }
+    // Create the DungeonRenderer instance for preloading assets
+    this.dungeonRenderer = new DungeonRenderer(this);
+    this.dungeonRenderer.preloadTileAssets();
   }
 
   create() {
@@ -208,7 +83,7 @@ export class GameScene extends Phaser.Scene {
     if (mapData) {
       console.log("Using map data from gameState");
 
-      // Render the map with the received data
+      // Render the map with the new DungeonRenderer
       if (this.dungeonRenderer) {
         this.dungeonRenderer.renderMap(mapData);
       } else {
@@ -275,7 +150,7 @@ export class GameScene extends Phaser.Scene {
       // Store in gameState
       gameState.setMapData(data);
 
-      // Render the map
+      // Render the map with the new DungeonRenderer
       if (this.dungeonRenderer) {
         this.dungeonRenderer.renderMap(data);
       }
@@ -362,14 +237,19 @@ export class GameScene extends Phaser.Scene {
     this.debugKey = this.input.keyboard.addKey("G");
     this.debugKey.on("down", () => {
       if (this.dungeonRenderer) {
-        this.dungeonRenderer.debug = !this.dungeonRenderer.debug;
-        console.log(
-          `Dungeon renderer debug mode: ${this.dungeonRenderer.debug}`
-        );
+        // Toggle debug mode on all relevant components
+        const newDebugState = !this.dungeonRenderer.debug;
+        this.dungeonRenderer.debug = newDebugState;
 
         if (this.debugManager) {
-          this.debugManager.debug = this.dungeonRenderer.debug;
+          this.debugManager.debug = newDebugState;
         }
+
+        if (this.collisionSystem) {
+          this.collisionSystem.setDebug(newDebugState);
+        }
+
+        console.log(`Debug mode: ${newDebugState ? "enabled" : "disabled"}`);
       }
     });
   }
@@ -402,12 +282,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   initializeManagers() {
-    // 1. Create dungeon renderer first (so it can create the map)
-    this.dungeonRenderer = new DungeonRenderer(this);
-    this.dungeonRenderer.init({ debug: true });
-
-    // 2. Create collision system
+    // 1. Create collision system first
     this.collisionSystem = new CollisionSystem(this);
+
+    // 2. Initialize the new DungeonRenderer (if not already done in preload)
+    if (!this.dungeonRenderer) {
+      this.dungeonRenderer = new DungeonRenderer(this);
+    }
+
+    // Initialize with options
+    this.dungeonRenderer.init({
+      debug: false, // Start with debug off
+      minimapSize: 400, // Smaller minimap
+    });
+
+    this.debugStructureBoundaries();
 
     // 3. Player Manager (handles rendering)
     this.playerManager = new PlayerManager(
@@ -460,11 +349,9 @@ export class GameScene extends Phaser.Scene {
       this.uiManager.handleResize(width, height);
     }
 
-    // Update minimap position
+    // Update dungeon renderer for minimap repositioning
     if (this.dungeonRenderer) {
-      // DungeonRenderer has its own resize handler
-      this.dungeonRenderer.handleResize &&
-        this.dungeonRenderer.handleResize(width, height);
+      this.dungeonRenderer.handleResize(width, height);
     }
   }
 
@@ -494,6 +381,10 @@ export class GameScene extends Phaser.Scene {
       this.debugManager.update();
     }
 
+    if (this.structureDebugGraphics && this.structureDebugGraphics.visible) {
+      this.updateStructureDebug();
+    }
+
     // Handle collapse warning flashing effect
     if (this.collapseWarning && this.collapseTime <= 10) {
       if (Math.floor(time / 500) % 2 === 0) {
@@ -518,6 +409,7 @@ export class GameScene extends Phaser.Scene {
       this.debugManager.destroy();
     }
 
+    // Clean up the dungeon renderer
     if (this.dungeonRenderer) {
       this.dungeonRenderer.destroy();
     }
@@ -535,5 +427,167 @@ export class GameScene extends Phaser.Scene {
     }
 
     console.log("GameScene properly cleaned up");
+  }
+
+  debugStructureBoundaries() {
+    // Remove any existing debug graphics first
+    if (this.structureDebugGraphics) {
+      this.structureDebugGraphics.destroy();
+    }
+
+    // Create a new graphics object for structure boundaries
+    this.structureDebugGraphics = this.add.graphics();
+    this.structureDebugGraphics.setDepth(1000); // Above everything else
+
+    // Make sure we have the dungeonRenderer and structureRenderer
+    if (!this.dungeonRenderer || !this.dungeonRenderer.structureRenderer) {
+      console.error("DungeonRenderer not available for structure debugging");
+      return;
+    }
+
+    const sr = this.dungeonRenderer.structureRenderer;
+    const tileSize = this.dungeonRenderer.tileSize;
+
+    // Draw boundaries for all structures
+    Object.entries(sr.structures).forEach(([id, structure]) => {
+      const bounds = structure.bounds;
+      const isVisible = sr.visibleStructures.has(id);
+
+      // Convert tile coordinates to pixel coordinates
+      const x = bounds.x * tileSize;
+      const y = bounds.y * tileSize;
+      const width = bounds.width * tileSize;
+      const height = bounds.height * tileSize;
+
+      // Use different colors for different structure types and visibility
+      let color, alpha;
+
+      if (isVisible) {
+        // Visible structures
+        switch (structure.type) {
+          case "room":
+            color = 0x00ff00; // Green for visible rooms
+            break;
+          case "corridor":
+            color = 0x0000ff; // Blue for visible corridors
+            break;
+          case "spawnRoom":
+            color = 0xff00ff; // Purple for visible spawn rooms
+            break;
+          default:
+            color = 0xffffff; // White for other visible structures
+        }
+        alpha = 0.3;
+      } else {
+        // Invisible structures
+        switch (structure.type) {
+          case "room":
+            color = 0x880000; // Dark red for invisible rooms
+            break;
+          case "corridor":
+            color = 0x000088; // Dark blue for invisible corridors
+            break;
+          case "spawnRoom":
+            color = 0x880088; // Dark purple for invisible spawn rooms
+            break;
+          default:
+            color = 0x444444; // Dark gray for other invisible structures
+        }
+        alpha = 0.15;
+      }
+
+      // Draw filled rectangle with lower alpha
+      this.structureDebugGraphics.fillStyle(color, alpha);
+      this.structureDebugGraphics.fillRect(x, y, width, height);
+
+      // Draw outline with higher alpha
+      this.structureDebugGraphics.lineStyle(2, color, 0.8);
+      this.structureDebugGraphics.strokeRect(x, y, width, height);
+
+      // Add structure ID text if it's visible or close to visible
+      const camera = this.cameras.main;
+      const inScreenBounds = !(
+        x > camera.scrollX + camera.width + 100 ||
+        x + width < camera.scrollX - 100 ||
+        y > camera.scrollY + camera.height + 100 ||
+        y + height < camera.scrollY - 100
+      );
+
+      if (inScreenBounds) {
+        // Add ID text that stays fixed relative to the structure
+        const textX = x + 10;
+        const textY = y + 10;
+
+        // Create unique ID for this text
+        const textId = `struct_${id}_text`;
+
+        // Check if text already exists
+        let structText = this.children.getByName(textId);
+        if (!structText) {
+          structText = this.add.text(
+            textX,
+            textY,
+            `${structure.type}\n${id.substring(0, 12)}${
+              id.length > 12 ? "..." : ""
+            }\n${bounds.width}x${bounds.height}`,
+            {
+              fontSize: "12px",
+              backgroundColor: "#00000080",
+              padding: { x: 3, y: 2 },
+              color: isVisible ? "#ffffff" : "#888888",
+            }
+          );
+          structText.setName(textId);
+          structText.setDepth(1001);
+        } else {
+          // Update existing text
+          structText.setText(
+            `${structure.type}\n${id.substring(0, 12)}${
+              id.length > 12 ? "..." : ""
+            }\n${bounds.width}x${bounds.height}`
+          );
+          structText.setPosition(textX, textY);
+          structText.setColor(isVisible ? "#ffffff" : "#888888");
+        }
+      }
+    });
+
+    // Draw camera bounds
+    const camera = this.cameras.main;
+    this.structureDebugGraphics.lineStyle(2, 0xff0000, 1);
+    this.structureDebugGraphics.strokeRect(
+      camera.scrollX,
+      camera.scrollY,
+      camera.width,
+      camera.height
+    );
+
+    // Add a toggle key for the debug overlay
+    if (!this.boundaryDebugKey) {
+      this.boundaryDebugKey = this.input.keyboard.addKey("B");
+      this.boundaryDebugKey.on("down", () => {
+        if (this.structureDebugGraphics) {
+          this.structureDebugGraphics.visible =
+            !this.structureDebugGraphics.visible;
+          console.log(
+            `Structure boundary debug: ${
+              this.structureDebugGraphics.visible ? "shown" : "hidden"
+            }`
+          );
+        }
+      });
+    }
+
+    console.log(`Structure boundary debug initialized. Press B to toggle.`);
+    return this.structureDebugGraphics;
+  }
+
+  // Add this to update method to keep debug visualization updated
+  updateStructureDebug() {
+    if (this.structureDebugGraphics && this.structureDebugGraphics.visible) {
+      // Clear and redraw
+      this.structureDebugGraphics.clear();
+      this.debugStructureBoundaries();
+    }
   }
 }
