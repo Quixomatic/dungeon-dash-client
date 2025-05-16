@@ -1,4 +1,4 @@
-// src/dungeonRenderer/core/StructureManager.js
+// src/dungeonRenderer2/core/StructureManager.js
 import { TileFactory } from './TileFactory';
 
 /**
@@ -75,7 +75,8 @@ export class StructureManager {
     // Skip if already loaded
     if (this.structures[structureId]) return;
     
-    // Calculate bounds including buffer for seamless transitions
+    // Calculate bounds with buffer for wall tiles
+    // CRITICAL: Add +1 tile buffer around the room/corridor to include walls
     const bounds = this.calculateExpandedBounds(structure);
     
     // Ensure bounds are within map limits
@@ -117,6 +118,22 @@ export class StructureManager {
         
         // Add to structure container
         structureContainer.add(sprite);
+        
+        // If this is a prop tile, add the prop sprite
+        if (mapData.layers.props && 
+            worldY >= 0 && worldY < mapData.layers.props.length &&
+            worldX >= 0 && mapData.layers.props[worldY] && worldX < mapData.layers.props[worldY].length) {
+          
+          const propValue = mapData.layers.props[worldY][worldX];
+          if (propValue > 0) {
+            const propSprite = this.tileFactory.createPropSprite(
+              propValue,
+              pos.localX * this.tileSize + this.tileSize / 2,
+              pos.localY * this.tileSize + this.tileSize / 2
+            );
+            structureContainer.add(propSprite);
+          }
+        }
       }
       
       // Yield to UI thread briefly after each chunk
@@ -142,14 +159,36 @@ export class StructureManager {
           color = 0xffffff; // White for unknown types
       }
       
-      const outline = this.scene.add.rectangle(
-        0, 0,
-        bounds.width * this.tileSize,
-        bounds.height * this.tileSize,
+      // Draw outline for the actual room/corridor (without buffer)
+      const actualRoomOutline = this.scene.add.rectangle(
+        (structure.x - bounds.x) * this.tileSize, 
+        (structure.y - bounds.y) * this.tileSize,
+        structure.width * this.tileSize,
+        structure.height * this.tileSize,
         color, 0.2
       ).setOrigin(0);
       
-      structureContainer.add(outline);
+      structureContainer.add(actualRoomOutline);
+      
+      // Draw outline for the entire container (with buffer)
+      const containerOutline = this.scene.add.rectangle(
+        0, 0,
+        bounds.width * this.tileSize,
+        bounds.height * this.tileSize,
+        0xffff00, 0.1
+      ).setOrigin(0);
+      
+      structureContainer.add(containerOutline);
+      
+      // Add text label for debug
+      const text = this.scene.add.text(
+        (structure.x - bounds.x + structure.width/2) * this.tileSize, 
+        (structure.y - bounds.y + structure.height/2) * this.tileSize,
+        `${type}\n${structureId.split('_')[1] || ''}`,
+        { fontSize: '12px', fill: '#ffffff', align: 'center', backgroundColor: '#00000080' }
+      ).setOrigin(0.5);
+      
+      structureContainer.add(text);
     }
     
     // Store structure data
@@ -203,18 +242,29 @@ export class StructureManager {
    * @private
    */
   calculateExpandedBounds(structure) {
-    // Add buffer around structure for seamless transitions
-    const buffer = 2; // Buffer tiles around structure
+    // CRITICAL: Add +1 tile buffer around the room/corridor 
+    // This includes the walls that are just outside the room/corridor
+    const wallBuffer = 1; // Buffer for wall tiles (critical)
+    
+    // Add visibility buffer for smoother transitions (can be configured)
+    const visBuffer = 1; // Additional buffer for smooth transitions
+    
+    // Total buffer is sum of wall buffer and visibility buffer
+    const totalBuffer = wallBuffer + visBuffer;
     
     return {
-      x: Math.max(0, structure.x - buffer),
-      y: Math.max(0, structure.y - buffer),
-      width: structure.width + buffer * 2,
-      height: structure.height + buffer * 2,
+      x: Math.max(0, structure.x - totalBuffer),
+      y: Math.max(0, structure.y - totalBuffer),
+      width: structure.width + totalBuffer * 2,
+      height: structure.height + totalBuffer * 2,
       originalX: structure.x,
       originalY: structure.y,
       originalWidth: structure.width,
-      originalHeight: structure.height
+      originalHeight: structure.height,
+      // Store buffer info for debugging
+      wallBuffer: wallBuffer,
+      visBuffer: visBuffer,
+      totalBuffer: totalBuffer
     };
   }
   
@@ -364,6 +414,39 @@ export class StructureManager {
   }
   
   /**
+   * Get all visible structures
+   * @returns {Array} - Array of visible structure objects
+   */
+  getVisibleStructures() {
+    const visible = [];
+    
+    for (const structureId of this.visibleStructures) {
+      if (this.structures[structureId]) {
+        visible.push(this.structures[structureId]);
+      }
+    }
+    
+    return visible;
+  }
+  
+  /**
+   * Get the count of visible structures
+   * @returns {number} - Number of visible structures
+   */
+  getVisibleCount() {
+    return this.visibleStructures.size;
+  }
+  
+  /**
+   * Check if a structure is visible
+   * @param {string} id - Structure ID
+   * @returns {boolean} - True if structure is visible
+   */
+  isStructureVisible(id) {
+    return this.visibleStructures.has(id);
+  }
+  
+  /**
    * Get structure counts
    * @returns {Object} - Structure counts
    */
@@ -435,7 +518,10 @@ export class StructureManager {
     this.clear();
     
     // Destroy tile factory
-    this.tileFactory.destroy();
+    if (this.tileFactory) {
+      this.tileFactory.destroy();
+      this.tileFactory = null;
+    }
     
     // Destroy container
     if (this.container) {

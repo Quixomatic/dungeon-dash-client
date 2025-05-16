@@ -1,4 +1,4 @@
-// src/dungeonRenderer/utils/VisibilityCulling.js
+// src/dungeonRenderer2/utils/VisibilityCulling.js
 
 /**
  * VisibilityCulling - Determines what structures and tiles should be visible
@@ -93,6 +93,40 @@ export class VisibilityCulling {
         structureBounds.bottom < expandedBounds.top ||
         structureBounds.top > expandedBounds.bottom
       );
+    }
+    
+    /**
+     * Get the initial camera bounds for the first visibility check
+     * @param {Phaser.Scene} scene - The scene containing the camera
+     * @param {number} buffer - Buffer size in pixels
+     * @returns {Object} - Camera bounds with buffer
+     */
+    getInitialCameraBounds(scene, buffer = 0) {
+      const camera = scene.cameras.main;
+      
+      // Get the current camera view without scrolling
+      // This is important for the initial visibility check
+      const bounds = {
+        left: camera.scrollX,
+        right: camera.scrollX + camera.width,
+        top: camera.scrollY,
+        bottom: camera.scrollY + camera.height
+      };
+      
+      // Add buffer
+      if (buffer > 0) {
+        bounds.left -= buffer;
+        bounds.right += buffer;
+        bounds.top -= buffer;
+        bounds.bottom += buffer;
+      }
+      
+      // Debug logging
+      if (this.debug) {
+        console.log(`Initial camera bounds: (${Math.round(bounds.left)},${Math.round(bounds.top)}) - (${Math.round(bounds.right)},${Math.round(bounds.bottom)})`);
+      }
+      
+      return bounds;
     }
     
     /**

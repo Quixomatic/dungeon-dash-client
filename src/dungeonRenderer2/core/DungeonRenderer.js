@@ -1,4 +1,4 @@
-// src/dungeonRenderer/core/DungeonRenderer.js
+// src/dungeonRenderer2/core/DungeonRenderer.js
 import { StructureManager } from './StructureManager';
 import { TileFactory } from './TileFactory';
 import { LoadingManager } from './LoadingManager';
@@ -6,6 +6,7 @@ import { VisibilityCulling } from '../utils/VisibilityCulling';
 import { PerformanceMonitor } from '../utils/PerformanceMonitor';
 import { MinimapRenderer } from '../ui/MinimapRenderer';
 import { TextureRegistry } from '../textures/TextureRegistry';
+import { DebugOverlay } from '../ui/DebugOverlay';
 
 /**
  * DungeonRenderer - Main class for rendering a tile-based dungeon
@@ -33,6 +34,7 @@ export class DungeonRenderer {
     this.minimapRenderer = new MinimapRenderer(scene);
     this.visibilityCulling = new VisibilityCulling();
     this.performanceMonitor = new PerformanceMonitor();
+    this.debugOverlay = new DebugOverlay(scene);
     
     // Rendering state
     this.mapData = null;
@@ -40,9 +42,8 @@ export class DungeonRenderer {
     this.loadCallback = null;
     this.isMapLoaded = false;
     
-    // Debug
-    this.debugText = null;
-    this.debugGraphics = null;
+    // Reference to structure renderer for debugging
+    this.structureRenderer = this.structureManager;
   }
   
   /**
@@ -60,7 +61,7 @@ export class DungeonRenderer {
     // Initialize components with options
     this.textureRegistry.init({ 
       tileSize: this.tileSize, 
-      debug: this.debug 
+      debug: this.debug
     });
     
     this.structureManager.init({ 
@@ -98,16 +99,45 @@ export class DungeonRenderer {
       debug: this.debug
     });
     
+    if (this.debug) {
+      this.debugOverlay.init({
+        dungeonRenderer: this,
+        structureRenderer: this.structureManager,
+        visibilityCulling: this.visibilityCulling
+      });
+    }
+    
     // Set up camera movement listener
     this.scene.cameras.main.on('camerascroll', this.onCameraMove, this);
     
-    // Set up debug displays if enabled
-    if (this.debug) {
-      this.setupDebugDisplays();
-    }
-    
     this.isInitialized = true;
     return this;
+  }
+  
+  /**
+   * Preload tile assets before rendering
+   * This should be called during the scene's preload phase
+   */
+  preloadTileAssets() {
+    // Create base textures for fallbacks
+    this.textureRegistry.generateProceduralTextures();
+    
+    // No need to preload actual textures here - we'll do that during map loading
+    // to show proper loading progress
+    
+    if (this.debug) {
+      console.log('Generated procedural textures for tiles');
+    }
+  }
+  
+  /**
+   * Render a dungeon map
+   * @param {Object} mapData - Map data from server
+   * @param {Function} callback - Optional callback when loading completes
+   */
+  renderMap(mapData, callback = null) {
+    // Just a wrapper around loadMap for backward compatibility
+    return this.loadMap(mapData, callback);
   }
   
   /**
@@ -143,14 +173,56 @@ export class DungeonRenderer {
       // Set up world bounds based on map data
       this.setWorldBounds();
       
+      // Store current camera position before loading structures
+      this.lastCameraPosition = {
+        x: this.scene.cameras.main.scrollX,
+        y: this.scene.cameras.main.scrollY
+      };
+      
+      // Debug log the initial camera position
+      if (this.debug) {
+        console.log(`Initial camera position: (${this.lastCameraPosition.x}, ${this.lastCameraPosition.y})`);
+      }
+      
+      // Preload textures first
+      this.loadingManager.showLoadingUI('Loading textures...', 0.1);
+      await this.textureRegistry.preloadTextures();
+      
       // Pre-render the minimap
+      this.loadingManager.showLoadingUI('Generating minimap...', 0.2);
       this.minimapRenderer.render(mapData, this.tileSize);
       
       // Start pre-loading all structures
+      this.loadingManager.showLoadingUI('Building dungeon structures...', 0.3);
       await this.preloadAllStructures();
       
-      // Perform initial visibility update
-      this.updateVisibility(true);
+      // Perform initial visibility update with expanded bounds
+      this.loadingManager.showLoadingUI('Finalizing dungeon...', 0.9);
+      
+      // Force an initial visibility update with generous bounds
+      // This is critical to ensuring structures are visible on first load
+      const expandedBuffer = this.tileSize * 15; // Use a large buffer for initial visibility
+      const initialBounds = {
+        left: this.lastCameraPosition.x - expandedBuffer,
+        right: this.lastCameraPosition.x + this.scene.cameras.main.width + expandedBuffer,
+        top: this.lastCameraPosition.y - expandedBuffer,
+        bottom: this.lastCameraPosition.y + this.scene.cameras.main.height + expandedBuffer
+      };
+      
+      // Debug log the initial bounds
+      if (this.debug) {
+        console.log(`Initial visibility bounds: (${initialBounds.left}, ${initialBounds.top}) to (${initialBounds.right}, ${initialBounds.bottom})`);
+      }
+      
+      // Ensure enough structures are visible initially
+      this.structureManager.updateVisibility(initialBounds, true);
+      
+      // Log how many structures are visible
+      if (this.debug) {
+        const visibleCount = this.structureManager.getVisibleCount();
+        const totalCount = Object.keys(this.structureManager.structures).length;
+        console.log(`Initial visibility check: ${visibleCount}/${totalCount} structures visible`);
+      }
       
       // Hide loading UI
       this.loadingManager.hideLoadingUI();
@@ -162,6 +234,16 @@ export class DungeonRenderer {
       // Execute callback if provided
       if (typeof this.loadCallback === 'function') {
         this.loadCallback(true);
+      }
+      
+      // Schedule another visibility update after a short delay
+      // This helps ensure structures appear correctly after any camera adjustments
+      this.scene.time.delayedCall(100, () => {
+        this.updateVisibility(true);
+      });
+      
+      if (this.debug) {
+        console.log('Dungeon map loaded successfully');
       }
       
       return true;
@@ -209,7 +291,7 @@ export class DungeonRenderer {
       for (const room of structural.rooms) {
         await this.structureManager.preloadStructure(room, this.mapData, 'room');
         loadedItems++;
-        this.loadingManager.updateProgress(loadedItems / totalItems);
+        this.loadingManager.updateProgress(0.3 + 0.5 * (loadedItems / totalItems));
         
         // Small delay to keep UI responsive
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -221,7 +303,7 @@ export class DungeonRenderer {
       for (const corridor of structural.corridors) {
         await this.structureManager.preloadStructure(corridor, this.mapData, 'corridor');
         loadedItems++;
-        this.loadingManager.updateProgress(loadedItems / totalItems);
+        this.loadingManager.updateProgress(0.3 + 0.5 * (loadedItems / totalItems));
         
         // Small delay to keep UI responsive
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -233,7 +315,7 @@ export class DungeonRenderer {
       for (const spawnRoom of structural.spawnRooms) {
         await this.structureManager.preloadStructure(spawnRoom, this.mapData, 'spawnRoom');
         loadedItems++;
-        this.loadingManager.updateProgress(loadedItems / totalItems);
+        this.loadingManager.updateProgress(0.3 + 0.5 * (loadedItems / totalCount));
         
         // Small delay to keep UI responsive
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -253,10 +335,14 @@ export class DungeonRenderer {
     const worldHeight = this.mapData.worldTileHeight * this.tileSize;
     
     // Set physics world bounds
-    this.scene.physics.world.setBounds(0, 0, worldWidth, worldHeight);
+    if (this.scene.physics && this.scene.physics.world) {
+      this.scene.physics.world.setBounds(0, 0, worldWidth, worldHeight);
+    }
     
     // Set camera bounds
-    this.scene.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
+    if (this.scene.cameras && this.scene.cameras.main) {
+      this.scene.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
+    }
     
     if (this.debug) {
       console.log(`World bounds set to ${worldWidth}x${worldHeight} pixels`);
@@ -301,125 +387,57 @@ export class DungeonRenderer {
       bottom: camera.scrollY + camera.height
     };
     
+    if (this.debug) {
+      console.log(`Updating visibility for camera bounds: (${Math.round(cameraBounds.left)},${Math.round(cameraBounds.top)}) - (${Math.round(cameraBounds.right)},${Math.round(cameraBounds.bottom)})`);
+    }
+    
     // Start performance measurement
     this.performanceMonitor.startMeasure('visibilityUpdate');
     
     // Update structure visibility
     this.structureManager.updateVisibility(cameraBounds, forceUpdate);
     
+    // Log how many structures are visible
+    if (this.debug) {
+      const visibleCount = this.structureManager.getVisibleCount();
+      const totalCount = Object.keys(this.structureManager.structures).length;
+      console.log(`Visibility update: ${visibleCount}/${totalCount} structures visible`);
+    }
+    
     // End performance measurement
     this.performanceMonitor.endMeasure('visibilityUpdate');
     
-    // Update debug displays
-    if (this.debug) {
-      this.updateDebugDisplays();
+    // Update debug overlay if enabled
+    if (this.debug && this.debugOverlay) {
+      this.debugOverlay.update({
+        cameraBounds,
+        lastCameraPosition: this.lastCameraPosition
+      });
     }
   }
   
   /**
    * Update the renderer - called from scene update
-   * @param {number} time - Current time
-   * @param {number} delta - Time delta since last update
+   * @param {number} playerX - Player X position
+   * @param {number} playerY - Player Y position
    */
-  update(time, delta) {
+  update(playerX, playerY) {
     // Skip if not loaded
     if (!this.isMapLoaded) return;
     
     // Update performance monitor
-    this.performanceMonitor.update(time, delta);
-    
-    // Get current player position
-    const playerPosition = this.getPlayerPosition();
+    this.performanceMonitor.update(this.scene.time.now, this.scene.time.deltaTime);
     
     // Update minimap with player position
-    if (playerPosition) {
-      this.minimapRenderer.updatePlayerPosition(playerPosition.x, playerPosition.y);
+    if (playerX !== undefined && playerY !== undefined) {
+      this.minimapRenderer.updatePlayerPosition(playerX, playerY);
     }
     
-    // Update debug displays
-    if (this.debug) {
-      this.updateDebugDisplays();
-    }
-  }
-  
-  /**
-   * Get current player position
-   * @returns {Object|null} - Player position or null
-   * @private
-   */
-  getPlayerPosition() {
-    // Try to get player from scene
-    if (this.scene.playerManager && this.scene.playerManager.getPlayerPosition) {
-      return this.scene.playerManager.getPlayerPosition();
-    }
-    
-    return null;
-  }
-  
-  /**
-   * Set up debug displays
-   * @private
-   */
-  setupDebugDisplays() {
-    // Create debug text display
-    this.debugText = this.scene.add.text(10, 10, 'Dungeon Renderer', {
-      fontSize: '14px',
-      fill: '#00ff00',
-      backgroundColor: '#000000aa',
-      padding: { x: 5, y: 2 }
-    }).setScrollFactor(0).setDepth(1000);
-    
-    // Create debug graphics for visualizing bounds
-    this.debugGraphics = this.scene.add.graphics()
-      .setScrollFactor(0)
-      .setDepth(1000);
-  }
-  
-  /**
-   * Update debug displays
-   * @private
-   */
-  updateDebugDisplays() {
-    if (!this.debug) return;
-    
-    if (this.debugText) {
-      // Get performance stats
-      const stats = this.performanceMonitor.getStats();
-      
-      // Get structure counts
-      const structureCounts = this.structureManager.getCounts();
-      
-      // Update debug text
-      this.debugText.setText([
-        `FPS: ${stats.fps.toFixed(1)}`,
-        `Visible: ${structureCounts.visible}/${structureCounts.total} structures`,
-        `Last Update: ${stats.lastUpdateTime.toFixed(2)}ms`,
-        `Camera: ${Math.round(this.lastCameraPosition.x)},${Math.round(this.lastCameraPosition.y)}`,
-        `Sprites: ${this.tileFactory.getActiveSpriteCount()}`
-      ].join('\n'));
-    }
-    
-    if (this.debugGraphics) {
-      // Clear previous graphics
-      this.debugGraphics.clear();
-      
-      // Get camera bounds for visualization
-      const camera = this.scene.cameras.main;
-      
-      // Draw camera view rectangle
-      this.debugGraphics.lineStyle(1, 0xff0000, 0.5);
-      this.debugGraphics.strokeRect(
-        0, 0, camera.width, camera.height
-      );
-      
-      // Draw culling buffer zone
-      const buffer = this.structureManager.visibilityBuffer * this.tileSize;
-      this.debugGraphics.lineStyle(1, 0x00ff00, 0.3);
-      this.debugGraphics.strokeRect(
-        -buffer, -buffer, 
-        camera.width + buffer * 2, 
-        camera.height + buffer * 2
-      );
+    // Update debug overlay if enabled
+    if (this.debug && this.debugOverlay) {
+      this.debugOverlay.update({
+        playerPosition: { x: playerX, y: playerY }
+      });
     }
   }
   
@@ -432,13 +450,18 @@ export class DungeonRenderer {
     // Update minimap position
     this.minimapRenderer.handleResize(width, height);
     
-    // Reposition debug elements
-    if (this.debug && this.debugText) {
-      this.debugText.setPosition(10, 10);
+    // Update debug overlay if enabled
+    if (this.debug && this.debugOverlay) {
+      this.debugOverlay.handleResize(width, height);
     }
     
     // Force visibility update to adjust for new view dimensions
     this.updateVisibility(true);
+    
+    // Log the resize event
+    if (this.debug) {
+      console.log(`Window resized to ${width}x${height}, updating visibility`);
+    }
   }
   
   /**
@@ -460,11 +483,54 @@ export class DungeonRenderer {
   }
   
   /**
+   * Get visible structures
+   * @returns {Array} - Array of visible structure objects
+   */
+  getVisibleStructures() {
+    return this.structureManager.getVisibleStructures();
+  }
+  
+  /**
+   * Force a visibility update with a large buffer
+   * Called when initial visibility isn't working
+   */
+  forceVisibilityUpdate() {
+    if (!this.isMapLoaded) return;
+    
+    // Use a very large buffer to ensure structures are visible
+    const extraBuffer = this.tileSize * 20;
+    const camera = this.scene.cameras.main;
+    
+    const expandedBounds = {
+      left: camera.scrollX - extraBuffer,
+      right: camera.scrollX + camera.width + extraBuffer,
+      top: camera.scrollY - extraBuffer,
+      bottom: camera.scrollY + camera.height + extraBuffer
+    };
+    
+    if (this.debug) {
+      console.log(`Forcing visibility update with large buffer: (${Math.round(expandedBounds.left)},${Math.round(expandedBounds.top)}) - (${Math.round(expandedBounds.right)},${Math.round(expandedBounds.bottom)})`);
+    }
+    
+    // Force update
+    this.structureManager.updateVisibility(expandedBounds, true);
+    
+    // Log how many structures are visible
+    if (this.debug) {
+      const visibleCount = this.structureManager.getVisibleCount();
+      const totalCount = Object.keys(this.structureManager.structures).length;
+      console.log(`Force visibility update: ${visibleCount}/${totalCount} structures visible`);
+    }
+  }
+  
+  /**
    * Clean up resources when destroying the renderer
    */
   destroy() {
     // Remove event listeners
-    this.scene.cameras.main.off('camerascroll', this.onCameraMove);
+    if (this.scene.cameras && this.scene.cameras.main) {
+      this.scene.cameras.main.off('camerascroll', this.onCameraMove);
+    }
     
     // Clean up all components
     this.structureManager.destroy();
@@ -473,15 +539,9 @@ export class DungeonRenderer {
     this.minimapRenderer.destroy();
     this.performanceMonitor.destroy();
     
-    // Clean up debug elements
-    if (this.debugText) {
-      this.debugText.destroy();
-      this.debugText = null;
-    }
-    
-    if (this.debugGraphics) {
-      this.debugGraphics.destroy();
-      this.debugGraphics = null;
+    if (this.debugOverlay) {
+      this.debugOverlay.destroy();
+      this.debugOverlay = null;
     }
     
     // Reset state

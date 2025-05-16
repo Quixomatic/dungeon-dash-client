@@ -1,4 +1,4 @@
-// src/dungeonRenderer/index.js
+// src/dungeonRenderer2/index.js
 
 // Main renderer class
 import { DungeonRenderer } from './core/DungeonRenderer';
@@ -10,6 +10,8 @@ import { LoadingManager } from './core/LoadingManager';
 
 // UI components
 import { MinimapRenderer } from './ui/MinimapRenderer';
+import { DebugOverlay } from './ui/DebugOverlay';
+import { LoadingUI } from './ui/LoadingUI';
 
 // Utilities
 import { VisibilityCulling } from './utils/VisibilityCulling';
@@ -32,6 +34,8 @@ export {
   
   // UI components
   MinimapRenderer,
+  DebugOverlay,
+  LoadingUI,
   
   // Utilities
   VisibilityCulling,
